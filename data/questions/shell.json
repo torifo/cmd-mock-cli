@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "prompt": "現在のディレクトリ配下から `app.log` を探すコマンドを打ってください。",
+      "required_tokens": ["find", ".", "app.log"],
+      "synonyms": ["find . -name app.log"],
+      "explanation": "`find` は条件に合うパスを再帰的に探します。",
+      "hint": "ヒント: `find <開始位置> -name <名前>` の形を思い出してください。"
+    },
+    {
+      "prompt": "`readme.txt` の内容を表示するコマンドを打ってください。",
+      "required_tokens": ["cat", "readme.txt"],
+      "synonyms": ["cat ./readme.txt"],
+      "explanation": "`cat` はファイル内容の表示に使います。",
+      "hint": "ヒント: 内容をそのまま標準出力へ出す基本コマンドです。"
+    },
+    {
+      "prompt": "`backup` ディレクトリを作るコマンドを打ってください。",
+      "required_tokens": ["mkdir", "backup"],
+      "synonyms": ["mkdir ./backup"],
+      "explanation": "`mkdir` はディレクトリを新規作成します。",
+      "hint": "ヒント: make directory の略です。"
+    }
+  ],
+  "challenges": [
+    {
+      "prompt": "課題: `logs` ディレクトリを作成し、`readme.txt` を `logs/readme.bak` にコピーしてから `submit` してください。",
+      "required_steps": [
+        ["mkdir", "logs"],
+        ["cp", "readme.txt", "logs/readme.bak"]
+      ],
+      "forbidden_tokens": ["rm"],
+      "hint": "ヒント: 2手必要です。ディレクトリ作成とコピーを順に行ってください。"
+    },
+    {
+      "prompt": "課題: `notes.txt` を作成し、その後 `archive/notes.txt` に移動してから `submit` してください。",
+      "required_steps": [
+        ["touch", "notes.txt"],
+        ["mkdir", "archive"],
+        ["mv", "notes.txt", "archive/notes.txt"]
+      ],
+      "forbidden_tokens": ["rm"],
+      "hint": "ヒント: ファイル作成、保存先作成、移動の3手です。"
+    }
+  ]
+}

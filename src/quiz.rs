@@ -1,6 +1,11 @@
+use std::sync::OnceLock;
+
+use anyhow::{Context, Result};
+use serde::Deserialize;
+
 use crate::model::{Difficulty, LearningMode, PlayMode};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Question {
     pub prompt: String,
     pub required_tokens: Vec<String>,
@@ -9,7 +14,7 @@ pub struct Question {
     pub hint: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Challenge {
     pub prompt: String,
     pub required_steps: Vec<Vec<String>>,
@@ -17,14 +22,50 @@ pub struct Challenge {
     pub hint: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct QuestionSet {
+    questions: Vec<QuestionSeed>,
+    challenges: Vec<ChallengeSeed>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct QuestionSeed {
+    prompt: String,
+    required_tokens: Vec<String>,
+    synonyms: Vec<String>,
+    explanation: String,
+    hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ChallengeSeed {
+    prompt: String,
+    required_steps: Vec<Vec<String>>,
+    forbidden_tokens: Vec<String>,
+    hint: Option<String>,
+}
+
 pub fn question_for(mode: LearningMode, difficulty: Difficulty, index: usize) -> Question {
-    let bank = question_bank(mode, difficulty);
-    bank[index % bank.len()].clone()
+    let set = question_set(mode);
+    let seed = &set.questions[index % set.questions.len()];
+    Question {
+        prompt: seed.prompt.clone(),
+        required_tokens: seed.required_tokens.clone(),
+        synonyms: seed.synonyms.clone(),
+        explanation: seed.explanation.clone(),
+        hint: hint_for(difficulty, seed.hint.clone()),
+    }
 }
 
 pub fn challenge_for(mode: LearningMode, difficulty: Difficulty, index: usize) -> Challenge {
-    let bank = challenge_bank(mode, difficulty);
-    bank[index % bank.len()].clone()
+    let set = question_set(mode);
+    let seed = &set.challenges[index % set.challenges.len()];
+    Challenge {
+        prompt: seed.prompt.clone(),
+        required_steps: seed.required_steps.clone(),
+        forbidden_tokens: seed.forbidden_tokens.clone(),
+        hint: hint_for(difficulty, seed.hint.clone()),
+    }
 }
 
 pub fn opening_prompt(
@@ -85,150 +126,38 @@ pub fn validate_challenge(challenge: &Challenge, history: &[String]) -> bool {
     true
 }
 
-fn question_bank(mode: LearningMode, difficulty: Difficulty) -> Vec<Question> {
+fn question_set(mode: LearningMode) -> &'static QuestionSet {
     match mode {
-        LearningMode::Linux | LearningMode::Macos => vec![
-            Question {
-                prompt: "現在のディレクトリ配下から `app.log` を探すコマンドを打ってください。"
-                    .to_string(),
-                required_tokens: vec!["find".to_string(), ".".to_string(), "app.log".to_string()],
-                synonyms: vec!["find . -name app.log".to_string()],
-                explanation: "`find` は条件に合うパスを再帰的に探します。".to_string(),
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: `find <開始位置> -name <名前>` の形を思い出してください。",
-                ),
-            },
-            Question {
-                prompt: "`readme.txt` の内容を表示するコマンドを打ってください。".to_string(),
-                required_tokens: vec!["cat".to_string(), "readme.txt".to_string()],
-                synonyms: vec!["cat ./readme.txt".to_string()],
-                explanation: "`cat` はファイル内容の表示に使います。".to_string(),
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: 内容をそのまま標準出力へ出す基本コマンドです。",
-                ),
-            },
-            Question {
-                prompt: "`backup` ディレクトリを作るコマンドを打ってください。".to_string(),
-                required_tokens: vec!["mkdir".to_string(), "backup".to_string()],
-                synonyms: vec!["mkdir ./backup".to_string()],
-                explanation: "`mkdir` はディレクトリを新規作成します。".to_string(),
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: make directory の略です。",
-                ),
-            },
-        ],
-        LearningMode::Docker => vec![
-            Question {
-                prompt: "`nginx` イメージから `web2` という名前でコンテナを起動するコマンドを打ってください。".to_string(),
-                required_tokens: vec![
-                    "docker".to_string(),
-                    "run".to_string(),
-                    "--name".to_string(),
-                    "web2".to_string(),
-                    "nginx".to_string(),
-                ],
-                synonyms: vec!["docker run --name web2 nginx:latest".to_string()],
-                explanation: "`docker run` はイメージからコンテナを作成して起動します。".to_string(),
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: `docker run --name <名前> <image>` の順序で考えてください。",
-                ),
-            },
-            Question {
-                prompt: "ローカルのイメージ一覧を表示するコマンドを打ってください。".to_string(),
-                required_tokens: vec!["docker".to_string(), "images".to_string()],
-                synonyms: vec!["docker image ls".to_string()],
-                explanation: "`docker images` は取得済みイメージ一覧を表示します。".to_string(),
-                hint: hint_for(difficulty, "ヒント: subcommand は複数形です。"),
-            },
-            Question {
-                prompt: "`web` コンテナのログを表示するコマンドを打ってください。".to_string(),
-                required_tokens: vec![
-                    "docker".to_string(),
-                    "logs".to_string(),
-                    "web".to_string(),
-                ],
-                synonyms: vec!["docker logs web".to_string()],
-                explanation: "`docker logs` はコンテナの標準出力ログを表示します。".to_string(),
-                hint: hint_for(difficulty, "ヒント: `docker <subcommand> <container>` の形です。"),
-            },
-        ],
+        LearningMode::Linux | LearningMode::Macos => shell_question_set(),
+        LearningMode::Docker => docker_question_set(),
     }
 }
 
-fn challenge_bank(mode: LearningMode, difficulty: Difficulty) -> Vec<Challenge> {
-    match mode {
-        LearningMode::Linux | LearningMode::Macos => vec![
-            Challenge {
-                prompt: "課題: `logs` ディレクトリを作成し、`readme.txt` を `logs/readme.bak` にコピーしてから `submit` してください。".to_string(),
-                required_steps: vec![
-                    vec!["mkdir".to_string(), "logs".to_string()],
-                    vec![
-                        "cp".to_string(),
-                        "readme.txt".to_string(),
-                        "logs/readme.bak".to_string(),
-                    ],
-                ],
-                forbidden_tokens: vec!["rm".to_string()],
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: 2手必要です。ディレクトリ作成とコピーを順に行ってください。",
-                ),
-            },
-            Challenge {
-                prompt: "課題: `notes.txt` を作成し、その後 `archive/notes.txt` に移動してから `submit` してください。".to_string(),
-                required_steps: vec![
-                    vec!["touch".to_string(), "notes.txt".to_string()],
-                    vec!["mkdir".to_string(), "archive".to_string()],
-                    vec![
-                        "mv".to_string(),
-                        "notes.txt".to_string(),
-                        "archive/notes.txt".to_string(),
-                    ],
-                ],
-                forbidden_tokens: vec!["rm".to_string()],
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: ファイル作成、保存先作成、移動の3手です。",
-                ),
-            },
-        ],
-        LearningMode::Docker => vec![
-            Challenge {
-                prompt: "課題: `alpine` イメージを取得し、`lab` という名前で起動してから `submit` してください。".to_string(),
-                required_steps: vec![
-                    vec!["docker".to_string(), "pull".to_string(), "alpine".to_string()],
-                    vec![
-                        "docker".to_string(),
-                        "run".to_string(),
-                        "--name".to_string(),
-                        "lab".to_string(),
-                        "alpine".to_string(),
-                    ],
-                ],
-                forbidden_tokens: vec!["docker rm".to_string()],
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: まずイメージ取得、その後コンテナ起動です。",
-                ),
-            },
-            Challenge {
-                prompt: "課題: `web` コンテナを停止し、その後ログを表示してから `submit` してください。".to_string(),
-                required_steps: vec![
-                    vec!["docker".to_string(), "stop".to_string(), "web".to_string()],
-                    vec!["docker".to_string(), "logs".to_string(), "web".to_string()],
-                ],
-                forbidden_tokens: vec!["docker rm".to_string()],
-                hint: hint_for(
-                    difficulty,
-                    "ヒント: 停止とログ確認の2手です。",
-                ),
-            },
-        ],
+fn shell_question_set() -> &'static QuestionSet {
+    static SET: OnceLock<QuestionSet> = OnceLock::new();
+    SET.get_or_init(|| load_question_set(include_str!("../data/questions/shell.json"), "shell"))
+}
+
+fn docker_question_set() -> &'static QuestionSet {
+    static SET: OnceLock<QuestionSet> = OnceLock::new();
+    SET.get_or_init(|| load_question_set(include_str!("../data/questions/docker.json"), "docker"))
+}
+
+fn load_question_set(raw: &str, label: &str) -> QuestionSet {
+    parse_question_set(raw)
+        .unwrap_or_else(|err| panic!("failed to load {} question set: {}", label, err))
+}
+
+fn parse_question_set(raw: &str) -> Result<QuestionSet> {
+    let parsed: QuestionSet =
+        serde_json::from_str(raw).context("failed to parse question set json")?;
+    if parsed.questions.is_empty() {
+        anyhow::bail!("question set must include at least one question");
     }
+    if parsed.challenges.is_empty() {
+        anyhow::bail!("question set must include at least one challenge");
+    }
+    Ok(parsed)
 }
 
 fn ordered_token_match(required: &[String], actual: &[&str]) -> bool {
@@ -257,9 +186,9 @@ fn render_prompt(prompt: &str, hint: Option<&str>) -> String {
     }
 }
 
-fn hint_for(difficulty: Difficulty, text: &str) -> Option<String> {
+fn hint_for(difficulty: Difficulty, hint: Option<String>) -> Option<String> {
     match difficulty {
-        Difficulty::Easy => Some(text.to_string()),
+        Difficulty::Easy => hint,
         Difficulty::Normal => {
             Some("ヒントは最小限です。コマンドの骨格を思い出してください。".to_string())
         }
@@ -269,7 +198,7 @@ fn hint_for(difficulty: Difficulty, text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Question, question_for, validate_quiz_answer};
+    use super::{Question, parse_question_set, question_for, validate_quiz_answer};
     use crate::model::{Difficulty, LearningMode};
 
     #[test]
@@ -290,5 +219,11 @@ mod tests {
         let first = question_for(LearningMode::Docker, Difficulty::Easy, 0);
         let fourth = question_for(LearningMode::Docker, Difficulty::Easy, 3);
         assert_eq!(first.prompt, fourth.prompt);
+    }
+
+    #[test]
+    fn question_set_requires_content() {
+        let invalid = r#"{"questions":[],"challenges":[]}"#;
+        assert!(parse_question_set(invalid).is_err());
     }
 }

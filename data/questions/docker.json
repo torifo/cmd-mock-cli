@@ -1,0 +1,45 @@
+{
+  "questions": [
+    {
+      "prompt": "`nginx` イメージから `web2` という名前でコンテナを起動するコマンドを打ってください。",
+      "required_tokens": ["docker", "run", "--name", "web2", "nginx"],
+      "synonyms": ["docker run --name web2 nginx:latest"],
+      "explanation": "`docker run` はイメージからコンテナを作成して起動します。",
+      "hint": "ヒント: `docker run --name <名前> <image>` の順序で考えてください。"
+    },
+    {
+      "prompt": "ローカルのイメージ一覧を表示するコマンドを打ってください。",
+      "required_tokens": ["docker", "images"],
+      "synonyms": ["docker image ls"],
+      "explanation": "`docker images` は取得済みイメージ一覧を表示します。",
+      "hint": "ヒント: subcommand は複数形です。"
+    },
+    {
+      "prompt": "`web` コンテナのログを表示するコマンドを打ってください。",
+      "required_tokens": ["docker", "logs", "web"],
+      "synonyms": ["docker logs web"],
+      "explanation": "`docker logs` はコンテナの標準出力ログを表示します。",
+      "hint": "ヒント: `docker <subcommand> <container>` の形です。"
+    }
+  ],
+  "challenges": [
+    {
+      "prompt": "課題: `alpine` イメージを取得し、`lab` という名前で起動してから `submit` してください。",
+      "required_steps": [
+        ["docker", "pull", "alpine"],
+        ["docker", "run", "--name", "lab", "alpine"]
+      ],
+      "forbidden_tokens": ["docker rm"],
+      "hint": "ヒント: まずイメージ取得、その後コンテナ起動です。"
+    },
+    {
+      "prompt": "課題: `web` コンテナを停止し、その後ログを表示してから `submit` してください。",
+      "required_steps": [
+        ["docker", "stop", "web"],
+        ["docker", "logs", "web"]
+      ],
+      "forbidden_tokens": ["docker rm"],
+      "hint": "ヒント: 停止とログ確認の2手です。"
+    }
+  ]
+}

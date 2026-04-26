@@ -67,21 +67,11 @@ impl CompletionMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProgressStats {
     pub answered: u32,
     pub correct: u32,
     pub mistakes: Vec<String>,
-}
-
-impl Default for ProgressStats {
-    fn default() -> Self {
-        Self {
-            answered: 0,
-            correct: 0,
-            mistakes: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

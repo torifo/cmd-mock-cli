@@ -99,6 +99,12 @@ pub struct App {
     helper_state: Rc<RefCell<HelperRuntime>>,
 }
 
+enum InputAction {
+    Continue,
+    Consumed,
+    Exit,
+}
+
 impl App {
     pub fn bootstrap(cli: Cli) -> Result<Self> {
         let (config, _) = AppConfig::load_or_default(cli.config.clone())?;
@@ -171,8 +177,13 @@ impl App {
                         continue;
                     }
                     editor.add_history_entry(line)?;
-                    if self.handle_meta_command(line)? {
-                        break;
+                    match self.handle_meta_command(line)? {
+                        InputAction::Exit => break,
+                        InputAction::Consumed => {
+                            self.persist_session()?;
+                            continue;
+                        }
+                        InputAction::Continue => {}
                     }
                     self.handle_learning_command(line)?;
                     self.persist_session()?;
@@ -188,12 +199,12 @@ impl App {
         Ok(())
     }
 
-    fn handle_meta_command(&mut self, line: &str) -> Result<bool> {
+    fn handle_meta_command(&mut self, line: &str) -> Result<InputAction> {
         match line {
-            "quit" | "exit" => return Ok(true),
+            "quit" | "exit" => return Ok(InputAction::Exit),
             "help" => {
                 println!("{}", self.help_text());
-                return Ok(false);
+                return Ok(InputAction::Consumed);
             }
             "resume" => {
                 if let Some(stored) = self.persisted.session.clone() {
@@ -204,16 +215,16 @@ impl App {
                 } else {
                     println!("no saved session");
                 }
-                return Ok(false);
+                return Ok(InputAction::Consumed);
             }
             "result" => {
                 println!("{}", self.result_text());
-                return Ok(false);
+                return Ok(InputAction::Consumed);
             }
             "submit" => {
                 if self.state.play_mode != PlayMode::Challenge {
                     println!("submit is available only in challenge mode");
-                    return Ok(false);
+                    return Ok(InputAction::Consumed);
                 }
                 let challenge = challenge_for(
                     self.state.learning_mode,
@@ -235,17 +246,17 @@ impl App {
                     }
                 }
                 self.persist_session()?;
-                return Ok(false);
+                return Ok(InputAction::Consumed);
             }
             _ => {}
         }
 
         if let Some(rest) = line.strip_prefix("mode ") {
             self.switch_mode(rest)?;
-            return Ok(false);
+            return Ok(InputAction::Consumed);
         }
 
-        Ok(false)
+        Ok(InputAction::Continue)
     }
 
     fn handle_learning_command(&mut self, line: &str) -> Result<()> {

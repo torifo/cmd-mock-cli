@@ -57,3 +57,9 @@ docker exec
 ```bash
 rtk cargo test
 ```
+
+## 配布計画
+
+- CI: `.github/workflows/ci.yml`
+- Release: `.github/workflows/release.yml`
+- ロードマップ: `release-plan.md`

@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: cmd-mock-cli
+            asset_name: cmd-mock-cli-linux-x86_64.tar.gz
+            archive_kind: tar
+          - os: macos-latest
+            artifact_name: cmd-mock-cli
+            asset_name: cmd-mock-cli-macos-aarch64.tar.gz
+            archive_kind: tar
+          - os: windows-latest
+            artifact_name: cmd-mock-cli.exe
+            asset_name: cmd-mock-cli-windows-x86_64.zip
+            archive_kind: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package tarball
+        if: matrix.archive_kind == 'tar'
+        run: tar -czf "${{ matrix.asset_name }}" -C target/release "${{ matrix.artifact_name }}"
+
+      - name: Package zip
+        if: matrix.archive_kind == 'zip'
+        shell: pwsh
+        run: Compress-Archive -Path "target/release/${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.asset_name }}"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset_name }}
+

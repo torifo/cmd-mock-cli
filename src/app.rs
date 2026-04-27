@@ -25,19 +25,21 @@ use crate::{
 #[command(
     author,
     version,
-    about = "Mock CLI game for Linux and Docker command practice"
+    about = "cmdock — CLI game for Linux and Docker command practice"
 )]
 pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Target environment to learn (linux, macos, docker)")]
     pub learning_mode: Option<CliLearningMode>,
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Game mode (quiz, challenge)")]
     pub play_mode: Option<CliPlayMode>,
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Hint level (easy, normal, hard)")]
     pub difficulty: Option<CliDifficulty>,
-    #[arg(long)]
+    #[arg(long, help = "Disable tab completion")]
     pub no_completion: bool,
+    #[arg(long, help = "List all available modes and options, then exit")]
+    pub list: bool,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -164,7 +166,7 @@ impl App {
         let mut editor = Editor::new()?;
         editor.set_helper(Some(helper));
 
-        println!("cmd-mock-cli");
+        println!("cmdock");
         println!("{}", self.render_status());
         self.print_current_prompt();
 
@@ -251,11 +253,6 @@ impl App {
             _ => {}
         }
 
-        if let Some(rest) = line.strip_prefix("mode ") {
-            self.switch_mode(rest)?;
-            return Ok(InputAction::Consumed);
-        }
-
         Ok(InputAction::Continue)
     }
 
@@ -312,42 +309,6 @@ impl App {
         Ok(())
     }
 
-    fn switch_mode(&mut self, arg: &str) -> Result<()> {
-        match arg {
-            "quiz" => {
-                self.state.play_mode = PlayMode::Quiz;
-                self.state.command_history.clear();
-            }
-            "challenge" => {
-                self.state.play_mode = PlayMode::Challenge;
-                self.state.command_history.clear();
-            }
-            "linux" => {
-                self.state.learning_mode = LearningMode::Linux;
-                self.state.command_history.clear();
-            }
-            "macos" => {
-                self.state.learning_mode = LearningMode::Macos;
-                self.state.command_history.clear();
-            }
-            "docker" => {
-                self.state.learning_mode = LearningMode::Docker;
-                self.state.command_history.clear();
-            }
-            "easy" => self.state.difficulty = Difficulty::Easy,
-            "normal" => self.state.difficulty = Difficulty::Normal,
-            "hard" => self.state.difficulty = Difficulty::Hard,
-            "completion:on" => self.state.completion = CompletionMode::On,
-            "completion:off" => self.state.completion = CompletionMode::Off,
-            _ => return Err(anyhow!("unknown mode switch: {}", arg)),
-        }
-        self.sync_helper_state();
-        self.ensure_prompt_loaded();
-        println!("{}", self.render_status());
-        self.print_current_prompt();
-        Ok(())
-    }
-
     fn help_text(&self) -> String {
         [
             "meta commands:",
@@ -355,12 +316,16 @@ impl App {
             "  result",
             "  resume",
             "  submit",
-            "  mode quiz|challenge|linux|macos|docker|easy|normal|hard|completion:on|completion:off",
             "  quit",
+            "",
             "supported shell commands:",
             "  pwd ls cd mkdir touch cat cp mv rm find grep echo",
+            "",
             "supported docker commands:",
             "  docker images|pull|run|ps|stop|rm|logs|exec",
+            "",
+            "to change modes, restart with CLI flags:",
+            "  cmdock --list",
         ]
         .join("\n")
     }
@@ -596,4 +561,34 @@ fn base_completions() -> Vec<String> {
     .into_iter()
     .map(ToString::to_string)
     .collect()
+}
+
+pub fn list_modes() -> String {
+    [
+        "Available options for cmdock:",
+        "",
+        "  --learning-mode <MODE>   Target environment to learn",
+        "    linux    Linux shell commands (default)",
+        "    macos    macOS shell commands",
+        "    docker   Docker CLI commands",
+        "",
+        "  --play-mode <MODE>       Game mode",
+        "    quiz       Answer prompts with the correct command (default)",
+        "    challenge  Complete multi-step tasks then type submit",
+        "",
+        "  --difficulty <LEVEL>     Hint and range control",
+        "    easy    Detailed hints, basic commands (default)",
+        "    normal  Minimal hints, wider range",
+        "    hard    No hints, broadest range",
+        "",
+        "  --no-completion          Disable tab completion",
+        "",
+        "Examples:",
+        "  cmdock",
+        "  cmdock --learning-mode docker --difficulty hard",
+        "  cmdock --play-mode challenge --no-completion",
+        "  cmdock --list",
+        "",
+    ]
+    .join("\n")
 }

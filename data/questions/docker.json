@@ -20,6 +20,27 @@
       "synonyms": ["docker logs web"],
       "explanation": "`docker logs` はコンテナの標準出力ログを表示します。",
       "hint": "ヒント: `docker <subcommand> <container>` の形です。"
+    },
+    {
+      "prompt": "停止中のコンテナも含めて一覧表示するコマンドを打ってください。",
+      "required_tokens": ["docker", "ps", "-a"],
+      "synonyms": ["docker ps --all"],
+      "explanation": "`docker ps -a` は停止中も含めた全コンテナを表示します。",
+      "hint": "ヒント: all を意味するオプションを付けます。"
+    },
+    {
+      "prompt": "`nginx` を `web` という名前でバックグラウンド起動し、`8080:80` を公開するコマンドを打ってください。",
+      "required_tokens": ["docker", "run", "-d", "-p", "8080:80", "--name", "web", "nginx"],
+      "synonyms": ["docker run --name web -d -p 8080:80 nginx"],
+      "explanation": "`docker run -d -p` でバックグラウンド起動とポート公開をまとめて指定できます。",
+      "hint": "ヒント: detached と port publish の2つのオプションを使います。"
+    },
+    {
+      "prompt": "`alpine` を `api` という名前で起動し、`APP_ENV=dev` を環境変数として渡すコマンドを打ってください。",
+      "required_tokens": ["docker", "run", "--name", "api", "-e", "APP_ENV=dev", "alpine"],
+      "synonyms": ["docker run -e APP_ENV=dev --name api alpine"],
+      "explanation": "`-e` はコンテナ起動時に環境変数を渡すオプションです。",
+      "hint": "ヒント: `-e KEY=value` の形を含めます。"
     }
   ],
   "challenges": [
@@ -40,6 +61,24 @@
       ],
       "forbidden_tokens": ["docker rm"],
       "hint": "ヒント: 停止とログ確認の2手です。"
+    },
+    {
+      "prompt": "課題: `nginx` イメージを取得し、`web3` という名前でバックグラウンド起動して `8080:80` を公開してから `submit` してください。",
+      "required_steps": [
+        ["docker", "pull", "nginx"],
+        ["docker", "run", "-d", "-p", "8080:80", "--name", "web3", "nginx"]
+      ],
+      "forbidden_tokens": ["docker rm"],
+      "hint": "ヒント: pull のあとに `docker run -d -p ...` を使います。"
+    },
+    {
+      "prompt": "課題: `alpine` を `api` という名前で `APP_ENV=dev` を渡して起動し、その後ログを表示してから `submit` してください。",
+      "required_steps": [
+        ["docker", "run", "--name", "api", "-e", "APP_ENV=dev", "alpine"],
+        ["docker", "logs", "api"]
+      ],
+      "forbidden_tokens": ["docker rm"],
+      "hint": "ヒント: 環境変数付きで起動したあと、ログ確認まで行います。"
     }
   ]
 }

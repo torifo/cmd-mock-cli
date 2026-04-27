@@ -20,6 +20,41 @@
       "synonyms": ["mkdir ./backup"],
       "explanation": "`mkdir` はディレクトリを新規作成します。",
       "hint": "ヒント: make directory の略です。"
+    },
+    {
+      "prompt": "現在のディレクトリで隠しファイルも含めて一覧表示するコマンドを打ってください。",
+      "required_tokens": ["ls", "-a"],
+      "synonyms": ["ls --all"],
+      "explanation": "`ls -a` は隠しファイルを含めて一覧表示します。",
+      "hint": "ヒント: all を意味する短いオプションを付けます。"
+    },
+    {
+      "prompt": "`/var/log/app.log` の中から `error` を含む行を探すコマンドを打ってください。",
+      "required_tokens": ["grep", "error", "/var/log/app.log"],
+      "synonyms": ["grep error /var/log/app.log"],
+      "explanation": "`grep` は文字列を含む行を検索するコマンドです。",
+      "hint": "ヒント: `grep <検索語> <ファイル>` の順です。"
+    },
+    {
+      "prompt": "`backup/logs/2026` まで親ディレクトリごとまとめて作成するコマンドを打ってください。",
+      "required_tokens": ["mkdir", "-p", "backup/logs/2026"],
+      "synonyms": ["mkdir -p ./backup/logs/2026"],
+      "explanation": "`mkdir -p` は途中の親ディレクトリもまとめて作成できます。",
+      "hint": "ヒント: 親ディレクトリも同時に作るオプションを使います。"
+    },
+    {
+      "prompt": "`backup` ディレクトリを中身ごと削除するコマンドを打ってください。",
+      "required_tokens": ["rm", "-r", "backup"],
+      "synonyms": ["rm -r ./backup"],
+      "explanation": "`rm -r` はディレクトリを再帰的に削除します。",
+      "hint": "ヒント: recursive の `-r` を付けます。"
+    },
+    {
+      "prompt": "`readme.txt` を `backup/readme.txt` にコピーするコマンドを打ってください。",
+      "required_tokens": ["cp", "readme.txt", "backup/readme.txt"],
+      "synonyms": ["cp ./readme.txt backup/readme.txt"],
+      "explanation": "`cp` はファイルやディレクトリを複製します。",
+      "hint": "ヒント: `cp <元> <先>` の順です。"
     }
   ],
   "challenges": [
@@ -33,7 +68,7 @@
       "hint": "ヒント: 2手必要です。ディレクトリ作成とコピーを順に行ってください。"
     },
     {
-      "prompt": "課題: `notes.txt` を作成し、その後 `archive/notes.txt` に移動してから `submit` してください。",
+      "prompt": "課題: `notes.txt` を作成し、その後 `archive` ディレクトリを作って `archive/notes.txt` に移動してから `submit` してください。",
       "required_steps": [
         ["touch", "notes.txt"],
         ["mkdir", "archive"],
@@ -41,6 +76,24 @@
       ],
       "forbidden_tokens": ["rm"],
       "hint": "ヒント: ファイル作成、保存先作成、移動の3手です。"
+    },
+    {
+      "prompt": "課題: `backup/logs` を親ディレクトリごと作成し、`/var/log/app.log` を `backup/logs/app.log` にコピーしてから `submit` してください。",
+      "required_steps": [
+        ["mkdir", "-p", "backup/logs"],
+        ["cp", "/var/log/app.log", "backup/logs/app.log"]
+      ],
+      "forbidden_tokens": ["rm"],
+      "hint": "ヒント: 先にネストしたディレクトリを作ってからコピーします。"
+    },
+    {
+      "prompt": "課題: 隠しファイルも含めて現在のディレクトリ一覧を確認し、その後 `app.log` を探してから `submit` してください。",
+      "required_steps": [
+        ["ls", "-a"],
+        ["find", ".", "app.log"]
+      ],
+      "forbidden_tokens": ["rm"],
+      "hint": "ヒント: 一覧確認のあと、再帰検索を行う2手です。"
     }
   ]
 }

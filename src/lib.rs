@@ -5,4 +5,5 @@ pub mod docker;
 pub mod model;
 pub mod persistence;
 pub mod quiz;
+pub mod ui;
 pub mod vfs;

@@ -89,7 +89,13 @@ pub fn opening_prompt(
 
 pub fn validate_quiz_answer(question: &Question, line: &str) -> bool {
     let tokens: Vec<&str> = line.split_whitespace().collect();
-    ordered_token_match(&question.required_tokens, &tokens)
+    if ordered_token_match(&question.required_tokens, &tokens) {
+        return true;
+    }
+    question
+        .synonyms
+        .iter()
+        .any(|synonym| synonym.split_whitespace().collect::<Vec<&str>>() == tokens)
 }
 
 pub fn validate_challenge(challenge: &Challenge, history: &[String]) -> bool {
@@ -198,7 +204,10 @@ fn hint_for(difficulty: Difficulty, hint: Option<String>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Question, parse_question_set, question_for, validate_quiz_answer};
+    use super::{
+        Challenge, Question, parse_question_set, question_for, validate_challenge,
+        validate_quiz_answer,
+    };
     use crate::model::{Difficulty, LearningMode};
 
     #[test]
@@ -215,15 +224,67 @@ mod tests {
     }
 
     #[test]
+    fn synonym_accepted_as_correct_answer() {
+        let question = Question {
+            prompt: String::new(),
+            required_tokens: vec!["docker".to_string(), "images".to_string()],
+            synonyms: vec!["docker image ls".to_string()],
+            explanation: String::new(),
+            hint: None,
+        };
+        assert!(validate_quiz_answer(&question, "docker images"));
+        assert!(validate_quiz_answer(&question, "docker image ls"));
+        assert!(!validate_quiz_answer(&question, "docker image"));
+    }
+
+    #[test]
     fn question_bank_rotates() {
+        let total = super::docker_question_set().questions.len();
         let first = question_for(LearningMode::Docker, Difficulty::Easy, 0);
-        let fourth = question_for(LearningMode::Docker, Difficulty::Easy, 3);
-        assert_eq!(first.prompt, fourth.prompt);
+        let wrapped = question_for(LearningMode::Docker, Difficulty::Easy, total);
+        assert_eq!(first.prompt, wrapped.prompt);
     }
 
     #[test]
     fn question_set_requires_content() {
         let invalid = r#"{"questions":[],"challenges":[]}"#;
         assert!(parse_question_set(invalid).is_err());
+    }
+
+    #[test]
+    fn challenge_validates_required_steps_in_order() {
+        let challenge = Challenge {
+            prompt: String::new(),
+            required_steps: vec![
+                vec!["mkdir".to_string(), "logs".to_string()],
+                vec!["cp".to_string(), "readme.txt".to_string()],
+            ],
+            forbidden_tokens: vec![],
+            hint: None,
+        };
+        let good = vec![
+            "mkdir logs".to_string(),
+            "ls".to_string(),
+            "cp readme.txt logs/readme.bak".to_string(),
+        ];
+        assert!(validate_challenge(&challenge, &good));
+
+        let wrong_order = vec![
+            "cp readme.txt logs/readme.bak".to_string(),
+            "mkdir logs".to_string(),
+        ];
+        assert!(!validate_challenge(&challenge, &wrong_order));
+    }
+
+    #[test]
+    fn challenge_rejects_forbidden_tokens() {
+        let challenge = Challenge {
+            prompt: String::new(),
+            required_steps: vec![vec!["mkdir".to_string(), "logs".to_string()]],
+            forbidden_tokens: vec!["rm".to_string()],
+            hint: None,
+        };
+        let history = vec!["mkdir logs".to_string(), "rm old_file".to_string()];
+        assert!(!validate_challenge(&challenge, &history));
     }
 }

@@ -30,7 +30,11 @@ use crate::{
 pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
-    #[arg(long, value_enum, help = "Target environment to learn (linux, macos, docker)")]
+    #[arg(
+        long,
+        value_enum,
+        help = "Target environment to learn (linux, macos, docker)"
+    )]
     pub learning_mode: Option<CliLearningMode>,
     #[arg(long, value_enum, help = "Game mode (quiz, challenge)")]
     pub play_mode: Option<CliPlayMode>,
@@ -107,6 +111,24 @@ enum InputAction {
     Exit,
 }
 
+struct HandlerOutput {
+    action: InputAction,
+    lines: Vec<String>,
+}
+
+impl HandlerOutput {
+    fn new(action: InputAction) -> Self {
+        Self {
+            action,
+            lines: Vec::new(),
+        }
+    }
+
+    fn exit() -> Self {
+        Self::new(InputAction::Exit)
+    }
+}
+
 impl App {
     pub fn bootstrap(cli: Cli) -> Result<Self> {
         let (config, _) = AppConfig::load_or_default(cli.config.clone())?;
@@ -166,9 +188,7 @@ impl App {
         let mut editor = Editor::new()?;
         editor.set_helper(Some(helper));
 
-        println!("cmdock");
-        println!("{}", self.render_status());
-        self.print_current_prompt();
+        self.print_lines(self.render_startup_lines());
 
         loop {
             let prompt = format!("{}> ", self.state.learning_mode.as_str());
@@ -179,7 +199,9 @@ impl App {
                         continue;
                     }
                     editor.add_history_entry(line)?;
-                    match self.handle_meta_command(line)? {
+                    let meta_output = self.handle_meta_command(line)?;
+                    self.print_lines(meta_output.lines);
+                    match meta_output.action {
                         InputAction::Exit => break,
                         InputAction::Consumed => {
                             self.persist_session()?;
@@ -187,7 +209,8 @@ impl App {
                         }
                         InputAction::Continue => {}
                     }
-                    self.handle_learning_command(line)?;
+                    let output = self.handle_learning_command(line)?;
+                    self.print_lines(output);
                     self.persist_session()?;
                 }
                 Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
@@ -201,32 +224,46 @@ impl App {
         Ok(())
     }
 
-    fn handle_meta_command(&mut self, line: &str) -> Result<InputAction> {
+    fn handle_meta_command(&mut self, line: &str) -> Result<HandlerOutput> {
         match line {
-            "quit" | "exit" => return Ok(InputAction::Exit),
+            "quit" | "exit" => return Ok(HandlerOutput::exit()),
             "help" => {
-                println!("{}", self.help_text());
-                return Ok(InputAction::Consumed);
+                return Ok(HandlerOutput {
+                    action: InputAction::Consumed,
+                    lines: vec![self.help_text()],
+                });
             }
             "resume" => {
                 if let Some(stored) = self.persisted.session.clone() {
                     self.restore(stored);
-                    println!("resumed saved session");
-                    println!("{}", self.render_status());
-                    self.print_current_prompt();
+                    let mut lines = vec![
+                        "resumed saved session".to_string(),
+                        self.render_status(),
+                    ];
+                    lines.extend(self.current_prompt_lines());
+                    return Ok(HandlerOutput {
+                        action: InputAction::Consumed,
+                        lines,
+                    });
                 } else {
-                    println!("no saved session");
+                    return Ok(HandlerOutput {
+                        action: InputAction::Consumed,
+                        lines: vec!["no saved session".to_string()],
+                    });
                 }
-                return Ok(InputAction::Consumed);
             }
             "result" => {
-                println!("{}", self.result_text());
-                return Ok(InputAction::Consumed);
+                return Ok(HandlerOutput {
+                    action: InputAction::Consumed,
+                    lines: vec![self.result_text()],
+                });
             }
             "submit" => {
                 if self.state.play_mode != PlayMode::Challenge {
-                    println!("submit is available only in challenge mode");
-                    return Ok(InputAction::Consumed);
+                    return Ok(HandlerOutput {
+                        action: InputAction::Consumed,
+                        lines: vec!["submit is available only in challenge mode".to_string()],
+                    });
                 }
                 let challenge = challenge_for(
                     self.state.learning_mode,
@@ -235,28 +272,32 @@ impl App {
                 );
                 let success = validate_challenge(&challenge, &self.state.command_history);
                 self.record_result(success, Some(challenge.prompt.clone()));
+                let mut lines = Vec::new();
                 if success {
-                    println!("challenge clear");
+                    lines.push("challenge clear".to_string());
                     self.state.challenge_index += 1;
                     self.state.command_history.clear();
                     self.ensure_prompt_loaded();
-                    self.print_current_prompt();
+                    lines.extend(self.current_prompt_lines());
                 } else {
-                    println!("challenge failed");
+                    lines.push("challenge failed".to_string());
                     if let Some(hint) = challenge.hint {
-                        println!("{}", hint);
+                        lines.push(hint.to_string());
                     }
                 }
-                self.persist_session()?;
-                return Ok(InputAction::Consumed);
+                return Ok(HandlerOutput {
+                    action: InputAction::Consumed,
+                    lines,
+                });
             }
             _ => {}
         }
 
-        Ok(InputAction::Continue)
+        Ok(HandlerOutput::new(InputAction::Continue))
     }
 
-    fn handle_learning_command(&mut self, line: &str) -> Result<()> {
+    fn handle_learning_command(&mut self, line: &str) -> Result<Vec<String>> {
+        let mut lines = Vec::new();
         let result = {
             let mut vfs = self.vfs.borrow_mut();
             let mut docker = self.docker.borrow_mut();
@@ -265,13 +306,12 @@ impl App {
 
         match result {
             Ok(output) => {
-                for line in output.stdout {
-                    if !line.is_empty() {
-                        println!("{}", line);
-                    }
-                }
+                lines.extend(output.stdout.into_iter().filter(|line| !line.is_empty()));
             }
-            Err(err) => println!("error: {}", err),
+            Err(err) => {
+                self.record_command_error(line);
+                lines.push(format!("error: {}", err));
+            }
         }
 
         self.state.command_history.push(line.to_string());
@@ -286,27 +326,27 @@ impl App {
                 let success = validate_quiz_answer(&question, line);
                 self.record_result(success, Some(question.prompt.clone()));
                 if success {
-                    println!("correct");
-                    println!("explanation: {}", question.explanation);
+                    lines.push("correct".to_string());
+                    lines.push(format!("explanation: {}", question.explanation));
                     if self.config.show_synonyms && !question.synonyms.is_empty() {
-                        println!("also valid: {}", question.synonyms.join(" | "));
+                        lines.push(format!("also valid: {}", question.synonyms.join(" | ")));
                     }
                     self.state.quiz_index += 1;
                     self.ensure_prompt_loaded();
-                    self.print_current_prompt();
+                    lines.extend(self.current_prompt_lines());
                 } else {
-                    println!("not quite");
+                    lines.push("not quite".to_string());
                     if let Some(hint) = question.hint {
-                        println!("{}", hint);
+                        lines.push(hint.to_string());
                     }
                 }
             }
             PlayMode::Challenge => {
-                println!("step recorded; use submit when you are done");
+                lines.push("step recorded; use submit when you are done".to_string());
             }
         }
 
-        Ok(())
+        Ok(lines)
     }
 
     fn help_text(&self) -> String {
@@ -372,8 +412,24 @@ impl App {
 
     fn record_result(&mut self, success: bool, prompt: Option<String>) {
         self.state.stats.answered += 1;
+        let play_mode_stats = self
+            .state
+            .stats
+            .by_play_mode
+            .entry(self.state.play_mode.as_str().to_string())
+            .or_default();
+        play_mode_stats.answered += 1;
+        let difficulty_stats = self
+            .state
+            .stats
+            .by_difficulty
+            .entry(self.state.difficulty.as_str().to_string())
+            .or_default();
+        difficulty_stats.answered += 1;
         if success {
             self.state.stats.correct += 1;
+            play_mode_stats.correct += 1;
+            difficulty_stats.correct += 1;
         } else if let Some(ref prompt_text) = prompt {
             self.state.stats.mistakes.push(prompt_text.clone());
         }
@@ -391,9 +447,25 @@ impl App {
         ));
     }
 
-    fn print_current_prompt(&self) {
-        if let Some(prompt) = &self.state.current_prompt {
-            println!("{}", prompt);
+    fn render_startup_lines(&self) -> Vec<String> {
+        let mut lines = vec!["cmdock".to_string(), self.render_status()];
+        lines.extend(self.current_prompt_lines());
+        lines
+    }
+
+    fn current_prompt_lines(&self) -> Vec<String> {
+        self.state
+            .current_prompt
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    fn print_lines(&self, lines: Vec<String>) {
+        for line in lines {
+            if !line.is_empty() {
+                println!("{}", line);
+            }
         }
     }
 
@@ -432,6 +504,20 @@ impl App {
             let overflow = self.persisted.recent_results.len() - 20;
             self.persisted.recent_results.drain(0..overflow);
         }
+    }
+
+    fn record_command_error(&mut self, line: &str) {
+        let command_name = line
+            .split_whitespace()
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
+        *self
+            .state
+            .stats
+            .command_errors
+            .entry(command_name)
+            .or_insert(0) += 1;
     }
 }
 

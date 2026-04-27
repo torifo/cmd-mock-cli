@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,10 +70,22 @@ impl CompletionMode {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModeStats {
+    pub answered: u32,
+    pub correct: u32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProgressStats {
     pub answered: u32,
     pub correct: u32,
     pub mistakes: Vec<String>,
+    #[serde(default)]
+    pub by_play_mode: BTreeMap<String, ModeStats>,
+    #[serde(default)]
+    pub by_difficulty: BTreeMap<String, ModeStats>,
+    #[serde(default)]
+    pub command_errors: BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

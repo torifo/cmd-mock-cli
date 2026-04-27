@@ -1,11 +1,11 @@
-# cmd-mock-cli
+# cmdock
 
 Linux / Docker コマンド学習用のモック CLI ゲームです。  
 実環境には触れず、仮想ファイルシステムと仮想 Docker 状態だけを更新します。
 
 ## What It Does
 
-- Linux / macOS / Docker の学習モードを切り替えられます
+- Linux / macOS / Docker の学習モードを選べます
 - `quiz` と `challenge` の 2 モードでコマンド練習できます
 - 補完あり / なしを切り替えられます
 - 実際のマシンには変更を加えません
@@ -13,89 +13,86 @@ Linux / Docker コマンド学習用のモック CLI ゲームです。
 
 ## Install
 
-現在の安定した導入方法はソースからの起動です。
-
-### From Source
-
-前提:
-
-- Rust toolchain
-- Cargo
-
-```bash
-git clone git@github.com:torifo/cmd-mock-cli.git
-cd cmd-mock-cli
-cargo run -- --help
-```
-
 ### From GitHub Release
 
-`v0.1.0` 以降は GitHub Release に各 OS 向けバイナリを添付します。  
-利用者は Release ページから自分の環境向けアーカイブを取得して実行できます。
+[Releases](https://github.com/torifo/cmd-mock-cli/releases) から自分の OS 向けアーカイブをダウンロードして実行してください。
+
+```bash
+# macOS / Linux
+tar -xzf cmdock-macos-aarch64.tar.gz
+./cmdock --help
+```
 
 将来的には以下を提供予定です。
 
 - Homebrew install
 - install script
 
+### From Source
+
+前提: Rust toolchain / Cargo
+
+```bash
+git clone git@github.com:torifo/cmd-mock-cli.git
+cd cmd-mock-cli
+cargo install --path .
+cmdock --help
+```
+
 ## Quick Start
 
 ```bash
-cargo run
+cmdock
 ```
 
-起動後は問題文が表示されるので、コマンドを入力してください。
+起動すると問題文が表示されるので、コマンドを入力してください。
 
-例:
+モードを指定して起動することもできます。
 
-```text
-linux> cat readme.txt
-docker> docker images
+```bash
+cmdock --learning-mode docker --difficulty hard
+cmdock --play-mode challenge --no-completion
+cmdock --list   # 全オプションを確認
 ```
 
 ## Modes
 
-### Learning Targets
+すべてのモードは起動時の CLI フラグで指定します。
 
-- `linux`
-- `macos`
-- `docker`
-
-### Play Modes
-
-- `quiz`: 問題文に対して適切なコマンドを打つ
-- `challenge`: 複数手順の課題を進めて `submit` で判定する
-
-### Difficulty
-
-- `easy`
-- `normal`
-- `hard`
-
-### Completion
-
-- `completion:on`
-- `completion:off`
-
-## Current Features
-
-- 学習対象モード: `linux`, `macos`, `docker`
-- プレイモード: `quiz`, `challenge`
-- 難易度: `easy`, `normal`, `hard`
-- 補完切替: `completion:on`, `completion:off`
-- セッション継続: `resume`
-- 成績表示: `result`
-- 課題提出: `submit`
-
-## Meta Commands
+```bash
+cmdock --list
+```
 
 ```text
-help
-result
-resume
-submit
-mode quiz|challenge|linux|macos|docker|easy|normal|hard|completion:on|completion:off
-quit
+Available options for cmdock:
+
+  --learning-mode <MODE>   Target environment to learn
+    linux    Linux shell commands (default)
+    macos    macOS shell commands
+    docker   Docker CLI commands
+
+  --play-mode <MODE>       Game mode
+    quiz       Answer prompts with the correct command (default)
+    challenge  Complete multi-step tasks then type submit
+
+  --difficulty <LEVEL>     Hint and range control
+    easy    Detailed hints, basic commands (default)
+    normal  Minimal hints, wider range
+    hard    No hints, broadest range
+
+  --no-completion          Disable tab completion
+```
+
+## In-Game Commands
+
+ゲーム中に使えるメタコマンドです。
+
+```text
+help     このヘルプを表示
+result   正答率と成績を表示
+resume   保存済みセッションを再開
+submit   課題の採点 (challenge モードのみ)
+quit     終了
 ```
 
 ## Supported Commands
@@ -103,70 +100,53 @@ quit
 ### Shell
 
 ```text
-pwd ls cd mkdir touch cat cp mv rm find grep echo
+pwd  ls  cd  mkdir  touch  cat  cp  mv  rm  find  grep  echo
 ```
 
 ### Docker
 
 ```text
 docker images
-docker pull
-docker run
-docker ps
-docker stop
-docker rm
-docker logs
-docker exec
+docker pull <image>
+docker run [--name <name>] <image>
+docker ps [-a]
+docker stop <name>
+docker rm <name>
+docker logs <name>
+docker exec <name> <cmd>
 ```
 
 ## Example Session
 
 ```text
-$ cargo run -- --learning-mode docker --play-mode quiz
-cmd-mock-cli
+$ cmdock --learning-mode docker --play-mode quiz
+cmdock
 [target:docker] [play:quiz] [difficulty:easy] [completion:on]
 `nginx` イメージから `web2` という名前でコンテナを起動するコマンドを打ってください。
 
 docker> docker run --name web2 nginx
 started web2
 correct
+explanation: `docker run` はイメージからコンテナを作成して起動します。
+also valid: docker run --name web2 nginx:latest
 ```
 
 ## Development
 
-### Run
-
 ```bash
-cargo run
-```
-
-### Tests
-
-```bash
-cargo test
-```
-
-### Lint
-
-```bash
+cargo run                                          # 起動
+cargo test                                         # テスト
 cargo clippy --all-targets --all-features -- -D warnings
-```
-
-### Format
-
-```bash
 cargo fmt
 ```
 
 ## CI / Release
 
-- CI: `.github/workflows/ci.yml`
-- Release: `.github/workflows/release.yml`
-- Roadmap: `release-plan.md`
+- CI: `.github/workflows/ci.yml` (fmt / clippy / test)
+- Release: `.github/workflows/release.yml` (タグ `v*.*.*` で Linux/macOS/Windows バイナリを自動生成)
 
 ## Current Limitations
 
-- UI は現時点では `rustyline` ベースの対話 CLI です
-- `ratatui` ベースの本格 TUI は未実装です
-- 問題セットとコマンド定義はまだコード内にあります
+- UI は現時点では `rustyline` ベースの対話 CLI です。`ratatui` ベースの TUI は未実装です
+- 問題セットはまだ最小限です
 - Homebrew / install script は未提供です

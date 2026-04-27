@@ -17,16 +17,16 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: cmd-mock-cli
-            asset_name: cmd-mock-cli-linux-x86_64.tar.gz
+            artifact_name: cmdock
+            asset_name: cmdock-linux-x86_64.tar.gz
             archive_kind: tar
           - os: macos-latest
-            artifact_name: cmd-mock-cli
-            asset_name: cmd-mock-cli-macos-aarch64.tar.gz
+            artifact_name: cmdock
+            asset_name: cmdock-macos-aarch64.tar.gz
             archive_kind: tar
           - os: windows-latest
-            artifact_name: cmd-mock-cli.exe
-            asset_name: cmd-mock-cli-windows-x86_64.zip
+            artifact_name: cmdock.exe
+            asset_name: cmdock-windows-x86_64.zip
             archive_kind: zip
 
     steps:

@@ -42,8 +42,13 @@ impl UiState {
         if self.cursor == 0 {
             return;
         }
-        self.cursor -= 1;
-        self.input.remove(self.cursor);
+        let prev = self.input[..self.cursor]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        self.input.remove(prev);
+        self.cursor = prev;
         self.completion_index = 0;
     }
 
@@ -57,13 +62,18 @@ impl UiState {
 
     pub fn move_left(&mut self) {
         if self.cursor > 0 {
-            self.cursor -= 1;
+            self.cursor = self.input[..self.cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
         }
     }
 
     pub fn move_right(&mut self) {
         if self.cursor < self.input.len() {
-            self.cursor += 1;
+            let ch = self.input[self.cursor..].chars().next().unwrap();
+            self.cursor += ch.len_utf8();
         }
     }
 
@@ -265,4 +275,34 @@ fn tail_scroll(total_lines: usize, visible_lines: usize) -> u16 {
 
 fn normalize_index(index: usize, len: usize) -> usize {
     if len == 0 { 0 } else { index.min(len - 1) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UiState;
+
+    #[test]
+    fn backspace_handles_multibyte_char() {
+        let mut s = UiState::default();
+        // 'あ' is 3 UTF-8 bytes
+        s.insert_char('あ');
+        assert_eq!(s.cursor(), 3);
+        s.backspace();
+        assert_eq!(s.input(), "");
+        assert_eq!(s.cursor(), 0);
+    }
+
+    #[test]
+    fn move_left_right_handles_multibyte_chars() {
+        let mut s = UiState::default();
+        s.insert_char('あ');
+        s.insert_char('い');
+        // cursor == 6 (2 × 3 bytes)
+        s.move_left();
+        assert_eq!(s.cursor(), 3);
+        s.move_left();
+        assert_eq!(s.cursor(), 0);
+        s.move_right();
+        assert_eq!(s.cursor(), 3);
+    }
 }

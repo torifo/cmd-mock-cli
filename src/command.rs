@@ -42,16 +42,24 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
         "pwd" => Ok(ExecOutput::single(vfs.pwd())),
         "ls" => {
             let mut show_all = false;
-            let mut target: Option<&str> = None;
-            for token in &tokens[1..] {
-                match token.as_str() {
-                    "-a" | "--all" => show_all = true,
-                    value if value.starts_with('-') => {}
-                    value => target = Some(value),
+            let mut long = false;
+            let mut target = None;
+            for t in &tokens[1..] {
+                if t.starts_with('-') {
+                    if t.contains('a') { show_all = true; }
+                    if t.contains('l') { long = true; }
+                } else {
+                    target = Some(t.as_str());
                 }
             }
             let lines = vfs.ls(target, show_all)?;
-            Ok(ExecOutput { stdout: lines })
+            if long {
+                Ok(ExecOutput {
+                    stdout: lines.iter().map(|n| format!("  {}", n)).collect(),
+                })
+            } else {
+                Ok(ExecOutput { stdout: lines })
+            }
         }
         "cd" => {
             let target = tokens.get(1).ok_or_else(|| anyhow!("cd requires target"))?;
@@ -59,16 +67,10 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
             Ok(ExecOutput::single(format!("cwd => {}", vfs.pwd())))
         }
         "mkdir" => {
-            let mut parents = false;
-            let mut target: Option<&str> = None;
-            for token in &tokens[1..] {
-                match token.as_str() {
-                    "-p" | "--parents" => parents = true,
-                    value if value.starts_with('-') => {}
-                    value => target = Some(value),
-                }
-            }
-            let target = target.ok_or_else(|| anyhow!("mkdir requires target"))?;
+            let parents = tokens.iter().any(|t| t == "-p");
+            let target = tokens.iter().skip(1)
+                .find(|t| !t.starts_with('-'))
+                .ok_or_else(|| anyhow!("mkdir requires target"))?;
             if parents {
                 vfs.mkdir_p(target)?;
             } else {
@@ -77,45 +79,33 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
             Ok(ExecOutput::single(format!("created {}", target)))
         }
         "touch" => {
-            let target = tokens
-                .get(1)
-                .ok_or_else(|| anyhow!("touch requires target"))?;
+            let target = tokens.get(1).ok_or_else(|| anyhow!("touch requires target"))?;
             vfs.touch(target)?;
             Ok(ExecOutput::single(format!("touched {}", target)))
         }
         "cat" => {
-            let target = tokens
-                .get(1)
-                .ok_or_else(|| anyhow!("cat requires target"))?;
+            let target = tokens.get(1).ok_or_else(|| anyhow!("cat requires target"))?;
             Ok(ExecOutput::single(vfs.cat(target)?))
         }
         "cp" => {
             let from = tokens.get(1).ok_or_else(|| anyhow!("cp requires source"))?;
-            let to = tokens
-                .get(2)
-                .ok_or_else(|| anyhow!("cp requires destination"))?;
+            let to = tokens.get(2).ok_or_else(|| anyhow!("cp requires destination"))?;
             vfs.cp(from, to)?;
             Ok(ExecOutput::single(format!("copied {} -> {}", from, to)))
         }
         "mv" => {
             let from = tokens.get(1).ok_or_else(|| anyhow!("mv requires source"))?;
-            let to = tokens
-                .get(2)
-                .ok_or_else(|| anyhow!("mv requires destination"))?;
+            let to = tokens.get(2).ok_or_else(|| anyhow!("mv requires destination"))?;
             vfs.mv(from, to)?;
             Ok(ExecOutput::single(format!("moved {} -> {}", from, to)))
         }
         "rm" => {
-            let mut recursive = false;
-            let mut target: Option<&str> = None;
-            for token in &tokens[1..] {
-                match token.as_str() {
-                    "-r" | "-R" | "--recursive" => recursive = true,
-                    value if value.starts_with('-') => {}
-                    value => target = Some(value),
-                }
-            }
-            let target = target.ok_or_else(|| anyhow!("rm requires target"))?;
+            let recursive = tokens.iter().any(|t| {
+                matches!(t.as_str(), "-r" | "-rf" | "-fr" | "-R")
+            });
+            let target = tokens.iter().skip(1)
+                .find(|t| !t.starts_with('-'))
+                .ok_or_else(|| anyhow!("rm requires target"))?;
             if recursive {
                 vfs.rm_recursive(target)?;
             } else {
@@ -124,27 +114,50 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
             Ok(ExecOutput::single(format!("removed {}", target)))
         }
         "find" => {
-            let (prefix, name) = parse_find_args(tokens, vfs)?;
-            let mut matches = vfs.find_name(&name);
-            if let Some(prefix) = prefix {
-                matches.retain(|path| path == &prefix || path.starts_with(&format!("{}/", prefix)));
+            let mut name_pattern: Option<String> = None;
+            let mut start = ".";
+            let mut i = 1;
+            while i < tokens.len() {
+                match tokens[i].as_str() {
+                    "-name" => {
+                        if let Some(next) = tokens.get(i + 1) {
+                            name_pattern = Some(
+                                next.trim_matches('"')
+                                    .trim_start_matches("./")
+                                    .to_string(),
+                            );
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "-type" => i += 2, // skip flag and its value
+                    token if !token.starts_with('-') => {
+                        start = token;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
             }
-            Ok(ExecOutput { stdout: matches })
+            let name = match &name_pattern {
+                Some(n) => n.as_str(),
+                None => tokens.last()
+                    .map(|s| s.trim_matches('"').trim_start_matches("./"))
+                    .unwrap_or(""),
+            };
+            Ok(ExecOutput { stdout: vfs.find_name_in(start, name) })
         }
         "grep" => {
-            let needle = tokens
-                .get(1)
-                .ok_or_else(|| anyhow!("grep requires needle"))?;
-            let file = tokens
-                .iter()
-                .skip(2)
-                .find(|token| !token.starts_with('-'))
-                .map(String::as_str);
-            let stdout = match file {
-                Some(file) => vfs.grep_in_file(needle, file)?,
-                None => vfs.grep(needle),
-            };
-            Ok(ExecOutput { stdout })
+            let args: Vec<&str> = tokens.iter().skip(1)
+                .filter(|t| !t.starts_with('-'))
+                .map(|s| s.as_str())
+                .collect();
+            let needle = args.first().ok_or_else(|| anyhow!("grep requires needle"))?;
+            if let Some(file) = args.get(1) {
+                Ok(ExecOutput { stdout: vfs.grep_in_file(needle, file)? })
+            } else {
+                Ok(ExecOutput { stdout: vfs.grep(needle) })
+            }
         }
         "echo" => Ok(ExecOutput::single(tokens[1..].join(" "))),
         other => Err(anyhow!("unsupported command: {}", other)),
@@ -167,7 +180,8 @@ fn execute_docker(tokens: &[String], docker: &mut DockerSim) -> Result<ExecOutpu
         }
         "run" => {
             let mut name = None;
-            let mut image = None;
+            let mut image: Option<&str> = None;
+            let mut detach = false;
             let mut cursor = 2usize;
             while cursor < tokens.len() {
                 match tokens[cursor].as_str() {
@@ -175,14 +189,12 @@ fn execute_docker(tokens: &[String], docker: &mut DockerSim) -> Result<ExecOutpu
                         name = tokens.get(cursor + 1).map(String::as_str);
                         cursor += 2;
                     }
-                    "-d" => {
+                    "-d" | "--detach" => {
+                        detach = true;
                         cursor += 1;
                     }
                     "-p" | "-e" | "-v" => {
-                        if tokens.get(cursor + 1).is_none() {
-                            return Err(anyhow!("docker run {} requires value", tokens[cursor]));
-                        }
-                        cursor += 2;
+                        cursor += 2; // skip flag and its value
                     }
                     value if !value.starts_with('-') => {
                         image = Some(value);
@@ -192,7 +204,7 @@ fn execute_docker(tokens: &[String], docker: &mut DockerSim) -> Result<ExecOutpu
                 }
             }
             let image = image.ok_or_else(|| anyhow!("docker run requires image"))?;
-            Ok(ExecOutput::single(docker.run(image, name)?))
+            Ok(ExecOutput::single(docker.run(image, name, detach)?))
         }
         "ps" => {
             let all = tokens.iter().any(|t| t == "-a" || t == "--all");
@@ -234,82 +246,6 @@ fn execute_docker(tokens: &[String], docker: &mut DockerSim) -> Result<ExecOutpu
     }
 }
 
-fn parse_find_args(tokens: &[String], vfs: &VirtualFs) -> Result<(Option<String>, String)> {
-    let mut search_root = None;
-    let mut name = None;
-    let mut cursor = 1usize;
-
-    while cursor < tokens.len() {
-        match tokens[cursor].as_str() {
-            "-name" => {
-                let needle = tokens
-                    .get(cursor + 1)
-                    .ok_or_else(|| anyhow!("find -name requires pattern"))?;
-                name = Some(normalize_find_name(needle));
-                cursor += 2;
-            }
-            value if value.starts_with('-') => {
-                cursor += 1;
-                if tokens
-                    .get(cursor)
-                    .is_some_and(|next| !next.starts_with('-'))
-                {
-                    cursor += 1;
-                }
-            }
-            value => {
-                if search_root.is_none() {
-                    search_root = Some(value.to_string());
-                } else if name.is_none() {
-                    name = Some(normalize_find_name(value));
-                }
-                cursor += 1;
-            }
-        }
-    }
-
-    let name = name.ok_or_else(|| anyhow!("find requires target"))?;
-    let prefix = search_root.map(|root| {
-        let pwd = vfs.pwd();
-        normalize_find_prefix(&pwd, &root)
-    });
-    Ok((prefix, name))
-}
-
-fn normalize_find_name(raw: &str) -> String {
-    raw.trim_matches('"')
-        .trim_start_matches("./")
-        .trim_matches('*')
-        .to_string()
-}
-
-fn normalize_find_prefix(pwd: &str, raw: &str) -> String {
-    let mut parts = if raw.starts_with('/') {
-        Vec::new()
-    } else {
-        pwd.trim_start_matches('/')
-            .split('/')
-            .filter(|part| !part.is_empty())
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-    };
-
-    for part in raw.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            other => parts.push(other.to_string()),
-        }
-    }
-
-    if parts.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{}", parts.join("/"))
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -391,6 +327,6 @@ mod tests {
         )
         .unwrap()
         .stdout;
-        assert_eq!(out, vec!["started demo".to_string()]);
+        assert_eq!(out, vec!["started demo (detached)".to_string()]);
     }
 }

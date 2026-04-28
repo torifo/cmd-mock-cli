@@ -149,10 +149,24 @@ impl VirtualFs {
     }
 
     pub fn find_name(&self, needle: &str) -> Vec<String> {
+        self.find_name_in(".", needle)
+    }
+
+    pub fn find_name_in(&self, start: &str, needle: &str) -> Vec<String> {
+        let start_path = self.resolve_path(start);
+        let start_prefix = if start_path.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", start_path.join("/"))
+        };
         let mut out = Vec::new();
         self.collect_paths("/", &self.root, &mut out);
         out.into_iter()
-            .filter(|path| path.rsplit('/').next().unwrap_or_default() == needle)
+            .filter(|path| {
+                (path == &start_prefix
+                    || path.starts_with(&format!("{}/", start_prefix)))
+                    && path.rsplit('/').next().unwrap_or_default() == needle
+            })
             .collect()
     }
 

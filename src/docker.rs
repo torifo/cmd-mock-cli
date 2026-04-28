@@ -41,12 +41,11 @@ impl DockerSim {
         format!("pulled {}", normalize_image(image))
     }
 
-    pub fn run(&mut self, image: &str, name: Option<&str>) -> Result<String> {
+    pub fn run(&mut self, image: &str, name: Option<&str>, detach: bool) -> Result<String> {
         let image = normalize_image(image);
         if !self.images.contains(&image) {
             return Err(anyhow!("image not found: {}", image));
         }
-
         let name = name
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("ctr-{}", self.containers.len() + 1));
@@ -56,7 +55,8 @@ impl DockerSim {
             running: true,
             logs: vec![format!("container {} started from {}", name, image)],
         });
-        Ok(format!("started {}", name))
+        let mode = if detach { " (detached)" } else { "" };
+        Ok(format!("started {}{}", name, mode))
     }
 
     pub fn ps(&self, all: bool) -> Vec<String> {
@@ -149,8 +149,8 @@ mod tests {
     #[test]
     fn docker_run_requires_existing_image() {
         let mut sim = DockerSim::default();
-        assert!(sim.run("missing", None).is_err());
+        assert!(sim.run("missing", None, false).is_err());
         sim.pull("missing");
-        assert!(sim.run("missing", Some("test")).is_ok());
+        assert!(sim.run("missing", Some("test"), false).is_ok());
     }
 }

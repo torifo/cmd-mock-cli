@@ -7,9 +7,10 @@ Linux / Docker コマンド学習用のモック CLI ゲームです。
 
 - Linux / macOS / Docker の学習モードを選べます
 - `quiz` と `challenge` の 2 モードでコマンド練習できます
-- 補完あり / なしを切り替えられます
+- Tab キーで補完候補を表示・選択できます（難易度で候補数が変わります）
+- 同義コマンドも正解として判定します
+- セッション保存、再開、成績確認ができます
 - 実際のマシンには変更を加えません
-- セッション保存、再開、結果確認ができます
 
 ## Install
 
@@ -45,7 +46,7 @@ cmdock --help
 cmdock
 ```
 
-起動すると問題文が表示されるので、コマンドを入力してください。
+起動すると対話型 TUI が開きます。問題文が上部に表示されるので、コマンドを入力してください。
 
 モードを指定して起動することもできます。
 
@@ -83,13 +84,34 @@ Available options for cmdock:
   --no-completion          Disable tab completion
 ```
 
+## TUI Layout
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ [linux] [quiz] [easy] [completion:on]                   │  ← ステータスバー
+├─────────────────────────────────────────────────────────┤
+│ Question                                                │  ← 問題文
+│ 現在のディレクトリ配下から `app.log` を探してください。  │
+├─────────────────────────────────────────────────────────┤
+│ Input  (Tab: complete  Shift+Tab: prev  Ctrl+C: quit)   │  ← 入力欄
+│ > find . -name app.log█                                 │
+├─────────────────────────────────────────────────────────┤
+│ Completions                                             │  ← 補完候補（Tab で表示）
+│ ▶ find . -name app.log                                  │
+├─────────────────────────────────────────────────────────┤
+│ History                                                 │  ← フィードバック履歴
+│ correct                                                 │
+│ explanation: find . -name で再帰検索します               │
+└─────────────────────────────────────────────────────────┘
+```
+
 ## In-Game Commands
 
 ゲーム中に使えるメタコマンドです。
 
 ```text
 help     このヘルプを表示
-result   正答率と成績を表示
+result   正答率・モード別・難易度別の成績を表示
 resume   保存済みセッションを再開
 submit   課題の採点 (challenge モードのみ)
 quit     終了
@@ -99,43 +121,69 @@ quit     終了
 
 ### Shell
 
-```text
-pwd  ls  cd  mkdir  touch  cat  cp  mv  rm  find  grep  echo
-```
+| コマンド | 対応フラグ |
+|---|---|
+| `pwd` | — |
+| `ls` | `-a`, `-l`, `-la` |
+| `cd` | — |
+| `mkdir` | `-p` (親ディレクトリ自動作成) |
+| `touch` | — |
+| `cat` | — |
+| `cp` | — |
+| `mv` | — |
+| `rm` | `-r`, `-rf` (再帰削除) |
+| `find` | `-name`, `-type` |
+| `grep` | ファイル引数指定 |
+| `echo` | — |
 
 ### Docker
 
+| コマンド | 対応フラグ |
+|---|---|
+| `docker images` | — |
+| `docker pull <image>` | — |
+| `docker run <image>` | `--name`, `-d`, `-p`, `-e`, `-v` |
+| `docker ps` | `-a` |
+| `docker stop <name>` | — |
+| `docker rm <name>` | — |
+| `docker logs <name>` | — |
+| `docker exec <name> <cmd>` | — |
+
+## Result Display
+
+`result` で以下を確認できます。
+
 ```text
-docker images
-docker pull <image>
-docker run [--name <name>] <image>
-docker ps [-a]
-docker stop <name>
-docker rm <name>
-docker logs <name>
-docker exec <name> <cmd>
+answered: 12  correct: 10  accuracy: 83.3%
+
+by play mode:
+  quiz: 8/10 (80.0%)
+  challenge: 2/2 (100.0%)
+
+by difficulty:
+  easy: 6/7 (85.7%)
+  hard: 4/5 (80.0%)
+
+most missed commands:
+  find: 2 times
+  grep: 1 times
 ```
 
 ## Example Session
 
 ```text
 $ cmdock --learning-mode docker --play-mode quiz
-cmdock
-[target:docker] [play:quiz] [difficulty:easy] [completion:on]
-`nginx` イメージから `web2` という名前でコンテナを起動するコマンドを打ってください。
+# TUI が起動し、問題文と入力欄が表示されます
 
-docker> docker run --name web2 nginx
-started web2
-correct
-explanation: `docker run` はイメージからコンテナを作成して起動します。
-also valid: docker run --name web2 nginx:latest
+docker run --name web2 nginx   → correct
+docker image ls                → correct (synonym accepted)
 ```
 
 ## Development
 
 ```bash
 cargo run                                          # 起動
-cargo test                                         # テスト
+cargo test                                         # テスト (20件)
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt
 ```
@@ -147,6 +195,6 @@ cargo fmt
 
 ## Current Limitations
 
-- UI は現時点では `rustyline` ベースの対話 CLI です。`ratatui` ベースの TUI は未実装です
-- 問題セットはまだ最小限です
 - Homebrew / install script は未提供です
+- macOS 専用の問題セットはまだ Linux と共通です
+- 問題セットはまだ最小限です（shell 8問、docker 6問）

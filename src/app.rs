@@ -102,12 +102,26 @@ pub struct App {
     vfs: VirtualFs,
     docker: DockerSim,
     log_lines: Vec<String>,
+    pub phase: AppPhase,
 }
 
 enum InputAction {
     Continue,
     Consumed,
     Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnboardingStep {
+    Demo,
+    SelectMode,
+    SelectDifficulty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppPhase {
+    Onboarding(OnboardingStep),
+    Playing,
 }
 
 struct HandlerOutput {
@@ -177,6 +191,9 @@ impl App {
 
         apply_cli_overrides(&mut state, &cli);
 
+        let has_saved_session = persisted.session.is_some();
+        let phase = initial_phase(&cli, has_saved_session);
+
         let mut app = Self {
             config,
             store,
@@ -185,8 +202,11 @@ impl App {
             vfs,
             docker,
             log_lines: Vec::new(),
+            phase,
         };
-        app.ensure_prompt_loaded();
+        if matches!(phase, AppPhase::Playing) {
+            app.ensure_prompt_loaded();
+        }
         app.log_lines = app.render_startup_lines();
         Ok(app)
     }
@@ -272,6 +292,9 @@ impl App {
     }
 
     fn process_line(&mut self, line: &str) -> Result<bool> {
+        if let AppPhase::Onboarding(step) = self.phase {
+            return self.process_onboarding(step, line);
+        }
         self.push_log_line(format!("> {}", line));
 
         let meta_output = self.handle_meta_command(line)?;
@@ -516,9 +539,103 @@ impl App {
     }
 
     fn render_startup_lines(&self) -> Vec<String> {
-        let mut lines = vec!["cmdock".to_string(), self.render_status()];
-        lines.extend(self.current_prompt_lines());
-        lines
+        if matches!(self.phase, AppPhase::Onboarding(_)) {
+            vec!["cmdock".to_string()]
+        } else {
+            let mut lines = vec!["cmdock".to_string(), self.render_status()];
+            lines.extend(self.current_prompt_lines());
+            lines
+        }
+    }
+
+    fn onboarding_prompt_lines(&self, step: OnboardingStep) -> Vec<String> {
+        match step {
+            OnboardingStep::Demo => vec![
+                "Welcome to cmdock!".to_string(),
+                String::new(),
+                "Try typing this command to confirm the virtual environment is working:"
+                    .to_string(),
+                "  ls".to_string(),
+                String::new(),
+                "Press Enter to run it.".to_string(),
+            ],
+            OnboardingStep::SelectMode => vec![
+                "Select play mode:".to_string(),
+                "  1) quiz       Answer prompts with the correct command".to_string(),
+                "  2) challenge  Complete multi-step tasks then type submit".to_string(),
+            ],
+            OnboardingStep::SelectDifficulty => vec![
+                "Select difficulty:".to_string(),
+                "  1) easy    Detailed hints, basic commands".to_string(),
+                "  2) normal  Minimal hints, wider range".to_string(),
+                "  3) hard    No hints, broadest range".to_string(),
+            ],
+        }
+    }
+
+    fn process_onboarding(&mut self, step: OnboardingStep, line: &str) -> Result<bool> {
+        self.push_log_line(format!("> {}", line));
+        match step {
+            OnboardingStep::Demo => {
+                let result = execute_command(
+                    LearningMode::Linux,
+                    line,
+                    &mut self.vfs,
+                    &mut self.docker,
+                );
+                match result {
+                    Ok(output) => {
+                        let lines: Vec<String> =
+                            output.stdout.into_iter().filter(|l| !l.is_empty()).collect();
+                        self.push_log_lines(lines);
+                    }
+                    Err(err) => self.push_log_line(format!("error: {}", err)),
+                }
+                self.push_log_line("--- Virtual environment OK ---".to_string());
+                self.phase = AppPhase::Onboarding(OnboardingStep::SelectMode);
+            }
+            OnboardingStep::SelectMode => match line.trim() {
+                "1" => {
+                    self.state.play_mode = PlayMode::Quiz;
+                    self.push_log_line("play mode: quiz".to_string());
+                    self.phase = AppPhase::Onboarding(OnboardingStep::SelectDifficulty);
+                }
+                "2" => {
+                    self.state.play_mode = PlayMode::Challenge;
+                    self.push_log_line("play mode: challenge".to_string());
+                    self.phase = AppPhase::Onboarding(OnboardingStep::SelectDifficulty);
+                }
+                _ => {
+                    self.push_log_line("Enter 1 (quiz) or 2 (challenge).".to_string());
+                }
+            },
+            OnboardingStep::SelectDifficulty => {
+                let chosen = match line.trim() {
+                    "1" => Some(Difficulty::Easy),
+                    "2" => Some(Difficulty::Normal),
+                    "3" => Some(Difficulty::Hard),
+                    _ => None,
+                };
+                match chosen {
+                    Some(difficulty) => {
+                        self.state.difficulty = difficulty;
+                        self.phase = AppPhase::Playing;
+                        self.ensure_prompt_loaded();
+                        self.push_log_line(format!("difficulty: {}", difficulty.as_str()));
+                        self.push_log_line("--- Game Start! ---".to_string());
+                        let prompt_lines = self.current_prompt_lines();
+                        self.push_log_lines(prompt_lines);
+                    }
+                    None => {
+                        self.push_log_line(
+                            "Enter 1 (easy), 2 (normal), or 3 (hard).".to_string(),
+                        );
+                    }
+                }
+            }
+        }
+        self.persist_session()?;
+        Ok(false)
     }
 
     fn current_prompt_lines(&self) -> Vec<String> {
@@ -607,16 +724,30 @@ impl App {
     }
 
     fn ui_model(&self, ui_state: &UiState, suggestions: &[String]) -> UiModel {
+        let (summary_lines, prompt_lines, completion_on) =
+            if let AppPhase::Onboarding(step) = self.phase {
+                (
+                    vec!["cmdock — CLI command practice".to_string()],
+                    self.onboarding_prompt_lines(step),
+                    false,
+                )
+            } else {
+                (
+                    self.summary_lines(),
+                    self.current_prompt_lines(),
+                    self.state.completion == CompletionMode::On,
+                )
+            };
         UiModel {
-            summary_lines: self.summary_lines(),
-            prompt_lines: self.current_prompt_lines(),
+            summary_lines,
+            prompt_lines,
             log_lines: self.log_lines.clone(),
             history_lines: self.history_lines(),
             input: ui_state.input().to_string(),
             cursor: ui_state.cursor(),
             selected_suggestion: ui_state.completion_index(),
             suggestions: suggestions.to_vec(),
-            completion_on: self.state.completion == CompletionMode::On,
+            completion_on,
         }
     }
 
@@ -683,6 +814,19 @@ impl App {
     }
 }
 
+fn initial_phase(cli: &Cli, has_saved_session: bool) -> AppPhase {
+    if has_saved_session {
+        return AppPhase::Playing;
+    }
+    if cli.play_mode.is_none() {
+        return AppPhase::Onboarding(OnboardingStep::Demo);
+    }
+    if cli.difficulty.is_none() {
+        return AppPhase::Onboarding(OnboardingStep::SelectDifficulty);
+    }
+    AppPhase::Playing
+}
+
 fn apply_cli_overrides(state: &mut SessionState, cli: &Cli) {
     if let Some(mode) = cli.learning_mode.clone() {
         state.learning_mode = mode.into();
@@ -731,6 +875,55 @@ fn base_completions() -> Vec<String> {
     .into_iter()
     .map(ToString::to_string)
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppPhase, Cli, CliDifficulty, CliPlayMode, OnboardingStep, initial_phase};
+
+    fn bare_cli() -> Cli {
+        Cli {
+            config: None,
+            learning_mode: None,
+            play_mode: None,
+            difficulty: None,
+            no_completion: false,
+            list: false,
+        }
+    }
+
+    #[test]
+    fn no_flags_no_session_starts_onboarding_demo() {
+        let cli = bare_cli();
+        assert_eq!(
+            initial_phase(&cli, false),
+            AppPhase::Onboarding(OnboardingStep::Demo)
+        );
+    }
+
+    #[test]
+    fn play_mode_and_difficulty_flags_skip_onboarding() {
+        let mut cli = bare_cli();
+        cli.play_mode = Some(CliPlayMode::Quiz);
+        cli.difficulty = Some(CliDifficulty::Easy);
+        assert_eq!(initial_phase(&cli, false), AppPhase::Playing);
+    }
+
+    #[test]
+    fn play_mode_without_difficulty_starts_at_select_difficulty() {
+        let mut cli = bare_cli();
+        cli.play_mode = Some(CliPlayMode::Quiz);
+        assert_eq!(
+            initial_phase(&cli, false),
+            AppPhase::Onboarding(OnboardingStep::SelectDifficulty)
+        );
+    }
+
+    #[test]
+    fn saved_session_skips_onboarding() {
+        let cli = bare_cli();
+        assert_eq!(initial_phase(&cli, true), AppPhase::Playing);
+    }
 }
 
 pub fn list_modes() -> String {

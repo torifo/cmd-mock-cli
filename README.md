@@ -14,20 +14,15 @@ Linux / Docker コマンド学習用のモック CLI ゲームです。
 
 ## Install
 
-### From GitHub Release
-
-[Releases](https://github.com/torifo/cmd-mock-cli/releases) から自分の OS 向けアーカイブをダウンロードして実行してください。
+### Script (macOS / Linux)
 
 ```bash
-# macOS / Linux
-tar -xzf cmdock-macos-aarch64.tar.gz
-./cmdock --help
+curl -fsSL https://raw.githubusercontent.com/torifo/cmd-mock-cli/main/install.sh | bash
 ```
 
-将来的には以下を提供予定です。
+バイナリは `~/.local/bin/cmdock` に配置されます。`~/.local/bin` が PATH に含まれていない場合は、スクリプトが案内します。
 
-- Homebrew install
-- install script
+将来的には Homebrew formula の提供を予定しています。
 
 ### From Source
 
@@ -46,9 +41,34 @@ cmdock --help
 cmdock
 ```
 
-起動すると対話型 TUI が開きます。問題文が上部に表示されるので、コマンドを入力してください。
+引数なしで起動するとオンボーディングが始まります。
 
-モードを指定して起動することもできます。
+```
+Welcome to cmdock!
+
+Try typing this command to confirm the virtual environment is working:
+  ls
+
+Press Enter to run it.
+> ls
+readme.txt
+--- Virtual environment OK ---
+
+Select play mode:
+  1) quiz       Answer prompts with the correct command
+  2) challenge  Complete multi-step tasks then type submit
+> 1
+
+Select difficulty:
+  1) easy    Detailed hints, basic commands
+  2) normal  Minimal hints, wider range
+  3) hard    No hints, broadest range
+> 2
+
+--- Game Start! ---
+```
+
+フラグで直接起動することもできます。
 
 ```bash
 cmdock --learning-mode docker --difficulty hard
@@ -195,6 +215,5 @@ cargo fmt
 
 ## Current Limitations
 
-- Homebrew / install script は未提供です
 - macOS 専用の問題セットはまだ Linux と共通です
 - 問題セットはまだ最小限です（shell 8問、docker 6問）

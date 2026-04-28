@@ -43,11 +43,18 @@ impl VirtualFs {
         }
     }
 
-    pub fn ls(&self, target: Option<&str>) -> Result<Vec<String>> {
+    pub fn ls(&self, target: Option<&str>, show_all: bool) -> Result<Vec<String>> {
         let path = self.resolve_path(target.unwrap_or("."));
         let node = self.node_at(&path)?;
         match node {
-            Node::Directory { children } => Ok(children.keys().cloned().collect()),
+            Node::Directory { children } => {
+                let mut entries: Vec<String> = children.keys().cloned().collect();
+                if show_all {
+                    entries.insert(0, "..".to_string());
+                    entries.insert(0, ".".to_string());
+                }
+                Ok(entries)
+            }
             Node::File { .. } => Err(anyhow!("not a directory: {}", display_path(&path))),
         }
     }
@@ -66,6 +73,17 @@ impl VirtualFs {
     pub fn mkdir(&mut self, target: &str) -> Result<()> {
         let path = self.resolve_path(target);
         self.insert_node(path, Node::directory())
+    }
+
+    pub fn mkdir_p(&mut self, target: &str) -> Result<()> {
+        let path = self.resolve_path(target);
+        for len in 1..=path.len() {
+            let partial = path[..len].to_vec();
+            if self.node_at(&partial).is_err() {
+                self.insert_node(partial, Node::directory())?;
+            }
+        }
+        Ok(())
     }
 
     pub fn touch(&mut self, target: &str) -> Result<()> {
@@ -98,6 +116,14 @@ impl VirtualFs {
 
     pub fn rm(&mut self, target: &str) -> Result<()> {
         let path = self.resolve_path(target);
+        if matches!(self.node_at(&path)?, Node::Directory { .. }) {
+            return Err(anyhow!("is a directory: {} (use rm -r)", target));
+        }
+        self.remove_node(&path)
+    }
+
+    pub fn rm_recursive(&mut self, target: &str) -> Result<()> {
+        let path = self.resolve_path(target);
         self.remove_node(&path)
     }
 
@@ -123,10 +149,24 @@ impl VirtualFs {
     }
 
     pub fn find_name(&self, needle: &str) -> Vec<String> {
+        self.find_name_in(".", needle)
+    }
+
+    pub fn find_name_in(&self, start: &str, needle: &str) -> Vec<String> {
+        let start_path = self.resolve_path(start);
+        let start_prefix = if start_path.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", start_path.join("/"))
+        };
         let mut out = Vec::new();
         self.collect_paths("/", &self.root, &mut out);
         out.into_iter()
-            .filter(|path| path.rsplit('/').next().unwrap_or_default() == needle)
+            .filter(|path| {
+                (path == &start_prefix
+                    || path.starts_with(&format!("{}/", start_prefix)))
+                    && path.rsplit('/').next().unwrap_or_default() == needle
+            })
             .collect()
     }
 
@@ -134,6 +174,18 @@ impl VirtualFs {
         let mut matches = Vec::new();
         self.collect_grep("/", &self.root, needle, &mut matches);
         matches
+    }
+
+    pub fn grep_in_file(&self, needle: &str, file: &str) -> Result<Vec<String>> {
+        let path = self.resolve_path(file);
+        match self.node_at(&path)? {
+            Node::File { content } => Ok(content
+                .lines()
+                .filter(|line| line.contains(needle))
+                .map(|line| format!("{}:{}", file, line))
+                .collect()),
+            Node::Directory { .. } => Err(anyhow!("is a directory: {}", file)),
+        }
     }
 
     fn seed(&mut self) {
@@ -288,5 +340,52 @@ mod tests {
         fs.mv("demo.txt", "archive.txt").expect("mv");
         assert!(fs.cat("archive.txt").is_ok());
         assert!(fs.cat("demo.txt").is_err());
+    }
+
+    #[test]
+    fn ls_show_all_includes_dot_entries() {
+        let fs = VirtualFs::default();
+        let entries = fs.ls(None, true).expect("ls");
+        assert_eq!(entries.first().map(String::as_str), Some("."));
+        assert_eq!(entries.get(1).map(String::as_str), Some(".."));
+        assert!(entries.iter().any(|entry| entry == "readme.txt"));
+    }
+
+    #[test]
+    fn rm_rejects_directories_without_recursive_flag() {
+        let mut fs = VirtualFs::default();
+        let error = fs.rm("/var").expect_err("rm should reject directories");
+        assert!(error.to_string().contains("use rm -r"));
+    }
+
+    #[test]
+    fn rm_recursive_removes_directories() {
+        let mut fs = VirtualFs::default();
+        fs.rm_recursive("/var").expect("rm -r");
+        assert!(fs.cd("/var").is_err());
+    }
+
+    #[test]
+    fn mkdir_p_creates_missing_parents() {
+        let mut fs = VirtualFs::default();
+        fs.mkdir_p("/tmp/nested/path").expect("mkdir -p");
+        fs.cd("/tmp/nested/path").expect("cd");
+        assert_eq!(fs.pwd(), "/tmp/nested/path");
+    }
+
+    #[test]
+    fn grep_in_file_returns_matching_lines_with_file_prefix() {
+        let fs = VirtualFs::default();
+        let matches = fs.grep_in_file("error", "/var/log/app.log").expect("grep");
+        assert_eq!(matches, vec!["/var/log/app.log:error: demo failure"]);
+    }
+
+    #[test]
+    fn grep_in_file_rejects_directories() {
+        let fs = VirtualFs::default();
+        let error = fs
+            .grep_in_file("error", "/var/log")
+            .expect_err("grep should reject directories");
+        assert!(error.to_string().contains("is a directory"));
     }
 }

@@ -1,23 +1,22 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{io, path::PathBuf, time::Duration};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use clap::Parser;
-use rustyline::{
-    Context, Editor, Helper,
-    completion::{Completer, Pair},
-    error::ReadlineError,
-    highlight::Highlighter,
-    hint::Hinter,
-    validate::Validator,
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::{
-    command::execute,
+    command::execute as execute_command,
     config::AppConfig,
     docker::DockerSim,
     model::{CompletionMode, Difficulty, LearningMode, PlayMode, SessionSnapshot, SessionState},
     persistence::{PersistedData, SessionStore, StoredSession},
     quiz::{challenge_for, opening_prompt, question_for, validate_challenge, validate_quiz_answer},
+    ui::{self, UiModel, UiState},
     vfs::VirtualFs,
 };
 
@@ -30,7 +29,11 @@ use crate::{
 pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
-    #[arg(long, value_enum, help = "Target environment to learn (linux, macos, docker)")]
+    #[arg(
+        long,
+        value_enum,
+        help = "Target environment to learn (linux, macos, docker)"
+    )]
     pub learning_mode: Option<CliLearningMode>,
     #[arg(long, value_enum, help = "Game mode (quiz, challenge)")]
     pub play_mode: Option<CliPlayMode>,
@@ -96,15 +99,50 @@ pub struct App {
     store: SessionStore,
     persisted: PersistedData,
     state: SessionState,
-    vfs: Rc<RefCell<VirtualFs>>,
-    docker: Rc<RefCell<DockerSim>>,
-    helper_state: Rc<RefCell<HelperRuntime>>,
+    vfs: VirtualFs,
+    docker: DockerSim,
+    log_lines: Vec<String>,
 }
 
 enum InputAction {
     Continue,
     Consumed,
     Exit,
+}
+
+struct HandlerOutput {
+    action: InputAction,
+    lines: Vec<String>,
+}
+
+impl HandlerOutput {
+    fn new(action: InputAction) -> Self {
+        Self {
+            action,
+            lines: Vec::new(),
+        }
+    }
+
+    fn exit() -> Self {
+        Self::new(InputAction::Exit)
+    }
+}
+
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    }
 }
 
 impl App {
@@ -139,94 +177,160 @@ impl App {
 
         apply_cli_overrides(&mut state, &cli);
 
-        let helper_state = Rc::new(RefCell::new(HelperRuntime {
-            completion: state.completion,
-            difficulty: state.difficulty,
-        }));
-
         let mut app = Self {
             config,
             store,
             persisted,
             state,
-            vfs: Rc::new(RefCell::new(vfs)),
-            docker: Rc::new(RefCell::new(docker)),
-            helper_state,
+            vfs,
+            docker,
+            log_lines: Vec::new(),
         };
         app.ensure_prompt_loaded();
+        app.log_lines = app.render_startup_lines();
         Ok(app)
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let helper = ShellHelper::new(
-            Rc::clone(&self.helper_state),
-            Rc::clone(&self.vfs),
-            Rc::clone(&self.docker),
-        );
-        let mut editor = Editor::new()?;
-        editor.set_helper(Some(helper));
-
-        println!("cmdock");
-        println!("{}", self.render_status());
-        self.print_current_prompt();
+        let _guard = TerminalGuard::enter()?;
+        let backend = CrosstermBackend::new(io::stdout());
+        let mut terminal = Terminal::new(backend)?;
+        let mut ui_state = UiState::default();
 
         loop {
-            let prompt = format!("{}> ", self.state.learning_mode.as_str());
-            match editor.readline(&prompt) {
-                Ok(line) => {
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    editor.add_history_entry(line)?;
-                    match self.handle_meta_command(line)? {
-                        InputAction::Exit => break,
-                        InputAction::Consumed => {
-                            self.persist_session()?;
-                            continue;
-                        }
-                        InputAction::Continue => {}
-                    }
-                    self.handle_learning_command(line)?;
-                    self.persist_session()?;
-                }
-                Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+            let suggestions = self.completion_suggestions(ui_state.input(), ui_state.cursor());
+            ui_state.sync_completion_index(suggestions.len());
+            let model = self.ui_model(&ui_state, &suggestions);
+            terminal.draw(|frame| ui::render(frame, &model))?;
+
+            if !event::poll(Duration::from_millis(200))? {
+                continue;
+            }
+
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+
+            match key.code {
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.persist_session()?;
                     break;
                 }
-                Err(err) => return Err(anyhow!(err)),
+                KeyCode::Char('d')
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && ui_state.input().is_empty() =>
+                {
+                    self.persist_session()?;
+                    break;
+                }
+                KeyCode::Enter => {
+                    let line = ui_state.input().trim().to_string();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let should_exit = self.process_line(&line)?;
+                    ui_state.clear_input();
+                    if should_exit {
+                        break;
+                    }
+                }
+                KeyCode::Char(ch)
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    ui_state.insert_char(ch);
+                }
+                KeyCode::Backspace => ui_state.backspace(),
+                KeyCode::Delete => ui_state.delete(),
+                KeyCode::Left => ui_state.move_left(),
+                KeyCode::Right => ui_state.move_right(),
+                KeyCode::Home => ui_state.move_home(),
+                KeyCode::End => ui_state.move_end(),
+                KeyCode::Tab => {
+                    if let Some(suggestion) = suggestions.get(ui_state.completion_index()) {
+                        ui_state.apply_completion(suggestion);
+                    }
+                }
+                KeyCode::BackTab => ui_state.select_prev_completion(suggestions.len()),
+                KeyCode::Up => ui_state.select_prev_completion(suggestions.len()),
+                KeyCode::Down => ui_state.select_next_completion(suggestions.len()),
+                KeyCode::Esc => {
+                    if ui_state.input().is_empty() {
+                        self.persist_session()?;
+                        break;
+                    }
+                    ui_state.clear_input();
+                }
+                _ => {}
             }
         }
 
+        terminal.show_cursor()?;
         Ok(())
     }
 
-    fn handle_meta_command(&mut self, line: &str) -> Result<InputAction> {
+    fn process_line(&mut self, line: &str) -> Result<bool> {
+        self.push_log_line(format!("> {}", line));
+
+        let meta_output = self.handle_meta_command(line)?;
+        self.push_log_lines(meta_output.lines);
+        match meta_output.action {
+            InputAction::Exit => {
+                self.persist_session()?;
+                return Ok(true);
+            }
+            InputAction::Consumed => {
+                self.persist_session()?;
+                return Ok(false);
+            }
+            InputAction::Continue => {}
+        }
+
+        let output = self.handle_learning_command(line)?;
+        self.push_log_lines(output);
+        self.persist_session()?;
+        Ok(false)
+    }
+
+    fn handle_meta_command(&mut self, line: &str) -> Result<HandlerOutput> {
         match line {
-            "quit" | "exit" => return Ok(InputAction::Exit),
+            "quit" | "exit" => return Ok(HandlerOutput::exit()),
             "help" => {
-                println!("{}", self.help_text());
-                return Ok(InputAction::Consumed);
+                return Ok(HandlerOutput {
+                    action: InputAction::Consumed,
+                    lines: vec![self.help_text()],
+                });
             }
             "resume" => {
                 if let Some(stored) = self.persisted.session.clone() {
                     self.restore(stored);
-                    println!("resumed saved session");
-                    println!("{}", self.render_status());
-                    self.print_current_prompt();
-                } else {
-                    println!("no saved session");
+                    let mut lines = vec!["resumed saved session".to_string(), self.render_status()];
+                    lines.extend(self.current_prompt_lines());
+                    return Ok(HandlerOutput {
+                        action: InputAction::Consumed,
+                        lines,
+                    });
                 }
-                return Ok(InputAction::Consumed);
+
+                return Ok(HandlerOutput {
+                    action: InputAction::Consumed,
+                    lines: vec!["no saved session".to_string()],
+                });
             }
             "result" => {
-                println!("{}", self.result_text());
-                return Ok(InputAction::Consumed);
+                return Ok(HandlerOutput {
+                    action: InputAction::Consumed,
+                    lines: vec![self.result_text()],
+                });
             }
             "submit" => {
                 if self.state.play_mode != PlayMode::Challenge {
-                    println!("submit is available only in challenge mode");
-                    return Ok(InputAction::Consumed);
+                    return Ok(HandlerOutput {
+                        action: InputAction::Consumed,
+                        lines: vec!["submit is available only in challenge mode".to_string()],
+                    });
                 }
                 let challenge = challenge_for(
                     self.state.learning_mode,
@@ -235,43 +339,47 @@ impl App {
                 );
                 let success = validate_challenge(&challenge, &self.state.command_history);
                 self.record_result(success, Some(challenge.prompt.clone()));
+                let mut lines = Vec::new();
                 if success {
-                    println!("challenge clear");
+                    lines.push("challenge clear".to_string());
                     self.state.challenge_index += 1;
                     self.state.command_history.clear();
                     self.ensure_prompt_loaded();
-                    self.print_current_prompt();
+                    lines.extend(self.current_prompt_lines());
                 } else {
-                    println!("challenge failed");
+                    lines.push("challenge failed".to_string());
                     if let Some(hint) = challenge.hint {
-                        println!("{}", hint);
+                        lines.push(hint.to_string());
                     }
                 }
-                self.persist_session()?;
-                return Ok(InputAction::Consumed);
+                return Ok(HandlerOutput {
+                    action: InputAction::Consumed,
+                    lines,
+                });
             }
             _ => {}
         }
 
-        Ok(InputAction::Continue)
+        Ok(HandlerOutput::new(InputAction::Continue))
     }
 
-    fn handle_learning_command(&mut self, line: &str) -> Result<()> {
-        let result = {
-            let mut vfs = self.vfs.borrow_mut();
-            let mut docker = self.docker.borrow_mut();
-            execute(self.state.learning_mode, line, &mut vfs, &mut docker)
-        };
+    fn handle_learning_command(&mut self, line: &str) -> Result<Vec<String>> {
+        let mut lines = Vec::new();
+        let result = execute_command(
+            self.state.learning_mode,
+            line,
+            &mut self.vfs,
+            &mut self.docker,
+        );
 
         match result {
             Ok(output) => {
-                for line in output.stdout {
-                    if !line.is_empty() {
-                        println!("{}", line);
-                    }
-                }
+                lines.extend(output.stdout.into_iter().filter(|line| !line.is_empty()));
             }
-            Err(err) => println!("error: {}", err),
+            Err(err) => {
+                self.record_command_error(line);
+                lines.push(format!("error: {}", err));
+            }
         }
 
         self.state.command_history.push(line.to_string());
@@ -286,27 +394,27 @@ impl App {
                 let success = validate_quiz_answer(&question, line);
                 self.record_result(success, Some(question.prompt.clone()));
                 if success {
-                    println!("correct");
-                    println!("explanation: {}", question.explanation);
+                    lines.push("correct".to_string());
+                    lines.push(format!("explanation: {}", question.explanation));
                     if self.config.show_synonyms && !question.synonyms.is_empty() {
-                        println!("also valid: {}", question.synonyms.join(" | "));
+                        lines.push(format!("also valid: {}", question.synonyms.join(" | ")));
                     }
                     self.state.quiz_index += 1;
                     self.ensure_prompt_loaded();
-                    self.print_current_prompt();
+                    lines.extend(self.current_prompt_lines());
                 } else {
-                    println!("not quite");
+                    lines.push("not quite".to_string());
                     if let Some(hint) = question.hint {
-                        println!("{}", hint);
+                        lines.push(hint.to_string());
                     }
                 }
             }
             PlayMode::Challenge => {
-                println!("step recorded; use submit when you are done");
+                lines.push("step recorded; use submit when you are done".to_string());
             }
         }
 
-        Ok(())
+        Ok(lines)
     }
 
     fn help_text(&self) -> String {
@@ -372,8 +480,24 @@ impl App {
 
     fn record_result(&mut self, success: bool, prompt: Option<String>) {
         self.state.stats.answered += 1;
+        let play_mode_stats = self
+            .state
+            .stats
+            .by_play_mode
+            .entry(self.state.play_mode.as_str().to_string())
+            .or_default();
+        play_mode_stats.answered += 1;
+        let difficulty_stats = self
+            .state
+            .stats
+            .by_difficulty
+            .entry(self.state.difficulty.as_str().to_string())
+            .or_default();
+        difficulty_stats.answered += 1;
         if success {
             self.state.stats.correct += 1;
+            play_mode_stats.correct += 1;
+            difficulty_stats.correct += 1;
         } else if let Some(ref prompt_text) = prompt {
             self.state.stats.mistakes.push(prompt_text.clone());
         }
@@ -391,33 +515,34 @@ impl App {
         ));
     }
 
-    fn print_current_prompt(&self) {
-        if let Some(prompt) = &self.state.current_prompt {
-            println!("{}", prompt);
-        }
+    fn render_startup_lines(&self) -> Vec<String> {
+        let mut lines = vec!["cmdock".to_string(), self.render_status()];
+        lines.extend(self.current_prompt_lines());
+        lines
+    }
+
+    fn current_prompt_lines(&self) -> Vec<String> {
+        self.state
+            .current_prompt
+            .iter()
+            .flat_map(|prompt| prompt.lines().map(ToString::to_string))
+            .collect()
     }
 
     fn persist_session(&mut self) -> Result<()> {
         self.persisted.session = Some(StoredSession {
             snapshot: SessionSnapshot::from(self.state.clone()),
-            vfs: self.vfs.borrow().clone(),
-            docker: self.docker.borrow().clone(),
+            vfs: self.vfs.clone(),
+            docker: self.docker.clone(),
         });
         self.store.save(&self.persisted)
     }
 
-    fn sync_helper_state(&self) {
-        let mut helper_state = self.helper_state.borrow_mut();
-        helper_state.completion = self.state.completion;
-        helper_state.difficulty = self.state.difficulty;
-    }
-
     fn restore(&mut self, stored: StoredSession) {
         self.state = SessionState::from(stored.snapshot);
-        *self.vfs.borrow_mut() = stored.vfs;
-        *self.docker.borrow_mut() = stored.docker;
+        self.vfs = stored.vfs;
+        self.docker = stored.docker;
         self.ensure_prompt_loaded();
-        self.sync_helper_state();
     }
 
     fn push_recent_result(&mut self, success: bool, prompt: Option<String>) {
@@ -431,6 +556,129 @@ impl App {
         if self.persisted.recent_results.len() > 20 {
             let overflow = self.persisted.recent_results.len() - 20;
             self.persisted.recent_results.drain(0..overflow);
+        }
+    }
+
+    fn record_command_error(&mut self, line: &str) {
+        let command_name = line
+            .split_whitespace()
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
+        *self
+            .state
+            .stats
+            .command_errors
+            .entry(command_name)
+            .or_insert(0) += 1;
+    }
+
+    fn completion_suggestions(&self, input: &str, cursor: usize) -> Vec<String> {
+        if self.state.completion == CompletionMode::Off {
+            return Vec::new();
+        }
+
+        let safe_cursor = cursor.min(input.len());
+        let prefix = &input[..safe_cursor];
+        let token_start = prefix
+            .rfind(char::is_whitespace)
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let current = &prefix[token_start..];
+
+        let mut candidates = base_completions()
+            .into_iter()
+            .filter(|item| item.starts_with(prefix) || item.starts_with(current))
+            .collect::<Vec<_>>();
+        candidates.extend(self.vfs.find_paths_with_prefix(current));
+        candidates.extend(self.docker.completions(current));
+        candidates.sort();
+        candidates.dedup();
+        candidates.truncate(self.completion_limit());
+        candidates
+    }
+
+    fn completion_limit(&self) -> usize {
+        match self.state.difficulty {
+            Difficulty::Easy => 12,
+            Difficulty::Normal => 6,
+            Difficulty::Hard => 3,
+        }
+    }
+
+    fn ui_model(&self, ui_state: &UiState, suggestions: &[String]) -> UiModel {
+        UiModel {
+            summary_lines: self.summary_lines(),
+            prompt_lines: self.current_prompt_lines(),
+            log_lines: self.log_lines.clone(),
+            history_lines: self.history_lines(),
+            input: ui_state.input().to_string(),
+            cursor: ui_state.cursor(),
+            selected_suggestion: ui_state.completion_index(),
+            suggestions: suggestions.to_vec(),
+            completion_on: self.state.completion == CompletionMode::On,
+        }
+    }
+
+    fn summary_lines(&self) -> Vec<String> {
+        let answered = self.state.stats.answered.max(1);
+        let accuracy = (self.state.stats.correct as f32 / answered as f32) * 100.0;
+        let mut lines = vec![
+            self.render_status(),
+            format!(
+                "answered:{} correct:{} accuracy:{:.1}%",
+                self.state.stats.answered, self.state.stats.correct, accuracy
+            ),
+            format!(
+                "quiz:{} challenge:{} errors:{}",
+                self.state.quiz_index,
+                self.state.challenge_index,
+                self.state.stats.command_errors.values().sum::<u32>()
+            ),
+            "keys: Enter run | Tab complete | Up/Down select | Esc clear".to_string(),
+        ];
+        if let Some(last) = self.persisted.recent_results.last() {
+            lines.push(format!("last result: {}", last));
+        }
+        lines
+    }
+
+    fn history_lines(&self) -> Vec<String> {
+        let mut lines = vec!["command history".to_string()];
+        if self.state.command_history.is_empty() {
+            lines.push("(empty)".to_string());
+        } else {
+            lines.extend(
+                self.state
+                    .command_history
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .map(|entry| format!("> {}", entry)),
+            );
+        }
+
+        lines.push(String::new());
+        lines.push("recent results".to_string());
+        if self.persisted.recent_results.is_empty() {
+            lines.push("(empty)".to_string());
+        } else {
+            lines.extend(self.persisted.recent_results.iter().rev().take(6).cloned());
+        }
+        lines
+    }
+
+    fn push_log_lines(&mut self, lines: Vec<String>) {
+        for line in lines {
+            self.push_log_line(line);
+        }
+    }
+
+    fn push_log_line(&mut self, line: String) {
+        self.log_lines.push(line);
+        if self.log_lines.len() > 400 {
+            let overflow = self.log_lines.len() - 400;
+            self.log_lines.drain(0..overflow);
         }
     }
 }
@@ -448,84 +696,6 @@ fn apply_cli_overrides(state: &mut SessionState, cli: &Cli) {
     }
     if cli.no_completion {
         state.completion = CompletionMode::Off;
-    }
-}
-
-#[derive(Clone, Copy)]
-struct HelperRuntime {
-    completion: CompletionMode,
-    difficulty: Difficulty,
-}
-
-struct ShellHelper {
-    state: Rc<RefCell<HelperRuntime>>,
-    vfs: Rc<RefCell<VirtualFs>>,
-    docker: Rc<RefCell<DockerSim>>,
-}
-
-impl ShellHelper {
-    fn new(
-        state: Rc<RefCell<HelperRuntime>>,
-        vfs: Rc<RefCell<VirtualFs>>,
-        docker: Rc<RefCell<DockerSim>>,
-    ) -> Self {
-        Self { state, vfs, docker }
-    }
-
-    fn limit(&self) -> usize {
-        match self.state.borrow().difficulty {
-            Difficulty::Easy => 12,
-            Difficulty::Normal => 6,
-            Difficulty::Hard => 3,
-        }
-    }
-}
-
-impl Helper for ShellHelper {}
-impl Hinter for ShellHelper {
-    type Hint = String;
-}
-impl Highlighter for ShellHelper {}
-impl Validator for ShellHelper {}
-
-impl Completer for ShellHelper {
-    type Candidate = Pair;
-
-    fn complete(
-        &self,
-        line: &str,
-        pos: usize,
-        _ctx: &Context<'_>,
-    ) -> rustyline::Result<(usize, Vec<Pair>)> {
-        if self.state.borrow().completion == CompletionMode::Off {
-            return Ok((0, Vec::new()));
-        }
-
-        let safe_pos = pos.min(line.len());
-        let start = line[..safe_pos]
-            .rfind(char::is_whitespace)
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
-        let current = &line[start..safe_pos];
-
-        let mut candidates = base_completions()
-            .into_iter()
-            .filter(|item| item.starts_with(current))
-            .collect::<Vec<_>>();
-        candidates.extend(self.vfs.borrow().find_paths_with_prefix(current));
-        candidates.extend(self.docker.borrow().completions(current));
-        candidates.sort();
-        candidates.dedup();
-
-        let pairs = candidates
-            .into_iter()
-            .take(self.limit())
-            .map(|candidate| Pair {
-                display: candidate.clone(),
-                replacement: candidate,
-            })
-            .collect();
-        Ok((start, pairs))
     }
 }
 

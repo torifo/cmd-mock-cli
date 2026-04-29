@@ -160,6 +160,40 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
             }
         }
         "echo" => Ok(ExecOutput::single(tokens[1..].join(" "))),
+        "head" => {
+            let n = tokens.iter()
+                .find(|t| t.starts_with('-') && t[1..].chars().all(|c| c.is_ascii_digit()))
+                .and_then(|t| t[1..].parse::<usize>().ok())
+                .unwrap_or(10);
+            let target = tokens.iter().skip(1)
+                .find(|t| !t.starts_with('-'))
+                .ok_or_else(|| anyhow!("head requires file"))?;
+            Ok(ExecOutput { stdout: vfs.head(target, n)? })
+        }
+        "tail" => {
+            let n = tokens.iter()
+                .find(|t| t.starts_with('-') && t[1..].chars().all(|c| c.is_ascii_digit()))
+                .and_then(|t| t[1..].parse::<usize>().ok())
+                .unwrap_or(10);
+            let target = tokens.iter().skip(1)
+                .find(|t| !t.starts_with('-'))
+                .ok_or_else(|| anyhow!("tail requires file"))?;
+            Ok(ExecOutput { stdout: vfs.tail(target, n)? })
+        }
+        "wc" => {
+            let target = tokens.iter().skip(1)
+                .find(|t| !t.starts_with('-'))
+                .ok_or_else(|| anyhow!("wc requires file"))?;
+            let (lines, words, bytes) = vfs.wc(target)?;
+            Ok(ExecOutput::single(format!("{:>8} {:>8} {:>8} {}", lines, words, bytes, target)))
+        }
+        "chmod" => {
+            let target = tokens.iter().skip(1)
+                .find(|t| !t.starts_with('-') && !t.chars().all(|c| c.is_ascii_digit()) && !t.contains('+') && !t.contains('-') && !t.contains('='))
+                .or_else(|| tokens.last())
+                .ok_or_else(|| anyhow!("chmod requires target"))?;
+            Ok(ExecOutput::single(format!("chmod: applied to {}", target)))
+        }
         other => Err(anyhow!("unsupported command: {}", other)),
     }
 }

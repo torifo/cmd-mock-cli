@@ -176,6 +176,48 @@ impl VirtualFs {
         matches
     }
 
+    pub fn head(&self, target: &str, n: usize) -> Result<Vec<String>> {
+        let path = self.resolve_path(target);
+        match self.node_at(&path)? {
+            Node::File { content } => Ok(content
+                .lines()
+                .take(n)
+                .map(ToString::to_string)
+                .collect()),
+            Node::Directory { .. } => Err(anyhow!("is a directory: {}", target)),
+        }
+    }
+
+    pub fn tail(&self, target: &str, n: usize) -> Result<Vec<String>> {
+        let path = self.resolve_path(target);
+        match self.node_at(&path)? {
+            Node::File { content } => {
+                let lines: Vec<&str> = content.lines().collect();
+                Ok(lines
+                    .iter()
+                    .rev()
+                    .take(n)
+                    .rev()
+                    .map(|s| s.to_string())
+                    .collect())
+            }
+            Node::Directory { .. } => Err(anyhow!("is a directory: {}", target)),
+        }
+    }
+
+    pub fn wc(&self, target: &str) -> Result<(usize, usize, usize)> {
+        let path = self.resolve_path(target);
+        match self.node_at(&path)? {
+            Node::File { content } => {
+                let lines = content.lines().count();
+                let words = content.split_whitespace().count();
+                let bytes = content.len();
+                Ok((lines, words, bytes))
+            }
+            Node::Directory { .. } => Err(anyhow!("is a directory: {}", target)),
+        }
+    }
+
     pub fn grep_in_file(&self, needle: &str, file: &str) -> Result<Vec<String>> {
         let path = self.resolve_path(file);
         match self.node_at(&path)? {
@@ -387,5 +429,27 @@ mod tests {
             .grep_in_file("error", "/var/log")
             .expect_err("grep should reject directories");
         assert!(error.to_string().contains("is a directory"));
+    }
+
+    #[test]
+    fn head_returns_first_n_lines() {
+        let fs = VirtualFs::default();
+        let lines = fs.head("/var/log/app.log", 1).expect("head");
+        assert_eq!(lines, vec!["error: demo failure".to_string()]);
+    }
+
+    #[test]
+    fn tail_returns_last_n_lines() {
+        let fs = VirtualFs::default();
+        let lines = fs.tail("/var/log/app.log", 1).expect("tail");
+        assert_eq!(lines, vec!["info: restarted".to_string()]);
+    }
+
+    #[test]
+    fn wc_counts_lines_words_bytes() {
+        let fs = VirtualFs::default();
+        let (lines, words, _bytes) = fs.wc("/var/log/app.log").expect("wc");
+        assert_eq!(lines, 2);
+        assert_eq!(words, 5);
     }
 }

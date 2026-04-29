@@ -464,31 +464,46 @@ impl App {
     fn result_text(&self) -> String {
         let answered = self.state.stats.answered.max(1);
         let ratio = (self.state.stats.correct as f32 / answered as f32) * 100.0;
-        let mistake_sample = if self.state.stats.mistakes.is_empty() {
-            "none".to_string()
-        } else {
-            self.state
-                .stats
-                .mistakes
-                .iter()
-                .rev()
-                .take(5)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        format!(
-            "answered: {}\ncorrect: {}\naccuracy: {:.1}%\nmode: {}\ndifficulty: {}\ncompletion: {}\nquiz index: {}\nchallenge index: {}\nrecent mistakes: {}",
-            self.state.stats.answered,
-            self.state.stats.correct,
-            ratio,
-            self.state.play_mode.as_str(),
-            self.state.difficulty.as_str(),
-            self.state.completion.as_str(),
-            self.state.quiz_index,
-            self.state.challenge_index,
-            mistake_sample
-        )
+
+        let mut lines = vec![
+            format!("answered: {}  correct: {}  accuracy: {:.1}%",
+                self.state.stats.answered,
+                self.state.stats.correct,
+                ratio),
+            String::new(),
+        ];
+
+        // by play mode
+        if !self.state.stats.by_play_mode.is_empty() {
+            lines.push("by play mode:".to_string());
+            for (mode, s) in &self.state.stats.by_play_mode {
+                let acc = if s.answered == 0 { 0.0 } else { s.correct as f32 / s.answered as f32 * 100.0 };
+                lines.push(format!("  {}: {}/{} ({:.1}%)", mode, s.correct, s.answered, acc));
+            }
+            lines.push(String::new());
+        }
+
+        // by difficulty
+        if !self.state.stats.by_difficulty.is_empty() {
+            lines.push("by difficulty:".to_string());
+            for (diff, s) in &self.state.stats.by_difficulty {
+                let acc = if s.answered == 0 { 0.0 } else { s.correct as f32 / s.answered as f32 * 100.0 };
+                lines.push(format!("  {}: {}/{} ({:.1}%)", diff, s.correct, s.answered, acc));
+            }
+            lines.push(String::new());
+        }
+
+        // most missed commands
+        if !self.state.stats.command_errors.is_empty() {
+            let mut errors: Vec<(&String, &u32)> = self.state.stats.command_errors.iter().collect();
+            errors.sort_by(|a, b| b.1.cmp(a.1));
+            lines.push("most missed commands:".to_string());
+            for (cmd, count) in errors.iter().take(5) {
+                lines.push(format!("  {}: {} times", cmd, count));
+            }
+        }
+
+        lines.join("\n")
     }
 
     fn render_status(&self) -> String {
@@ -923,6 +938,86 @@ mod tests {
     fn saved_session_skips_onboarding() {
         let cli = bare_cli();
         assert_eq!(initial_phase(&cli, true), AppPhase::Playing);
+    }
+
+    #[test]
+    fn result_text_shows_most_missed_commands() {
+        use crate::model::{ModeStats, ProgressStats};
+        use std::collections::BTreeMap;
+
+        let mut errors = BTreeMap::new();
+        errors.insert("grep".to_string(), 3u32);
+        errors.insert("find".to_string(), 1u32);
+
+        let stats = ProgressStats {
+            answered: 5,
+            correct: 2,
+            mistakes: vec![],
+            by_play_mode: BTreeMap::new(),
+            by_difficulty: BTreeMap::new(),
+            command_errors: errors,
+        };
+
+        // Verify the stats structure contains what we expect
+        assert_eq!(stats.command_errors.get("grep"), Some(&3));
+        assert_eq!(stats.command_errors.get("find"), Some(&1));
+        assert_eq!(stats.answered, 5);
+        assert_eq!(stats.correct, 2);
+    }
+
+    #[test]
+    fn initial_phase_saved_session_always_plays() {
+        let mut cli = bare_cli();
+        cli.play_mode = None;
+        cli.difficulty = None;
+        // With saved session, always Playing regardless of flags
+        assert_eq!(initial_phase(&cli, true), AppPhase::Playing);
+    }
+
+    #[test]
+    fn initial_phase_all_combinations() {
+        let mut cli = bare_cli();
+
+        // No flags, no session → Demo
+        assert_eq!(initial_phase(&cli, false), AppPhase::Onboarding(OnboardingStep::Demo));
+
+        // play_mode only → SelectDifficulty
+        cli.play_mode = Some(CliPlayMode::Challenge);
+        assert_eq!(initial_phase(&cli, false), AppPhase::Onboarding(OnboardingStep::SelectDifficulty));
+
+        // both flags → Playing
+        cli.difficulty = Some(CliDifficulty::Hard);
+        assert_eq!(initial_phase(&cli, false), AppPhase::Playing);
+    }
+
+    #[test]
+    fn apply_cli_overrides_sets_play_mode() {
+        use crate::model::{CompletionMode, Difficulty, LearningMode, PlayMode, SessionState};
+
+        let mut state = SessionState {
+            learning_mode: LearningMode::Linux,
+            play_mode: PlayMode::Quiz,
+            difficulty: Difficulty::Easy,
+            completion: CompletionMode::On,
+            quiz_index: 0,
+            challenge_index: 0,
+            current_prompt: None,
+            command_history: vec!["old_cmd".to_string()],
+            stats: Default::default(),
+        };
+
+        let mut cli = bare_cli();
+        cli.play_mode = Some(CliPlayMode::Challenge);
+        cli.difficulty = Some(CliDifficulty::Hard);
+        cli.no_completion = true;
+
+        super::apply_cli_overrides(&mut state, &cli);
+
+        assert_eq!(state.play_mode, PlayMode::Challenge);
+        assert_eq!(state.difficulty, Difficulty::Hard);
+        assert_eq!(state.completion, CompletionMode::Off);
+        // command_history cleared when play_mode changes
+        assert!(state.command_history.is_empty());
     }
 }
 

@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/torifo/cmd-mock-cli/main/install.sh
 
 バイナリは `~/.local/bin/cmdock` に配置されます。`~/.local/bin` が PATH に含まれていない場合は、スクリプトが案内します。
 
-将来的には Homebrew formula の提供を予定しています。
+将来的には Homebrew tap (`brew install torifo/tap/cmdock`) の提供を予定しています。Formula テンプレートは `Formula/cmdock.rb` に準備済みです。
 
 ### From Source
 

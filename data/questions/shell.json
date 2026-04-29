@@ -55,6 +55,48 @@
       "synonyms": ["cp ./readme.txt backup/readme.txt"],
       "explanation": "`cp` はファイルやディレクトリを複製します。",
       "hint": "ヒント: `cp <元> <先>` の順です。"
+    },
+    {
+      "prompt": "ファイルの先頭10行を表示してください（対象: /var/log/app.log）",
+      "required_tokens": ["head", "/var/log/app.log"],
+      "synonyms": ["head -10 /var/log/app.log", "head -n 10 /var/log/app.log"],
+      "explanation": "head はファイルの先頭行を表示します。デフォルトは10行です。",
+      "hint": "head <ファイル>"
+    },
+    {
+      "prompt": "ファイルの末尾10行を表示してください（対象: /var/log/app.log）",
+      "required_tokens": ["tail", "/var/log/app.log"],
+      "synonyms": ["tail -10 /var/log/app.log", "tail -n 10 /var/log/app.log"],
+      "explanation": "tail はファイルの末尾行を表示します。ログ監視によく使います。",
+      "hint": "tail <ファイル>"
+    },
+    {
+      "prompt": "/var/log/app.log の行数・単語数・バイト数を数えてください",
+      "required_tokens": ["wc", "/var/log/app.log"],
+      "synonyms": [],
+      "explanation": "wc (word count) はテキストファイルの統計を表示します。",
+      "hint": "wc <ファイル>"
+    },
+    {
+      "prompt": "readme.txt に実行権限を付与してください",
+      "required_tokens": ["chmod", "+x", "readme.txt"],
+      "synonyms": ["chmod", "755", "readme.txt"],
+      "explanation": "chmod でファイルの権限を変更します。+x で実行権限を追加します。",
+      "hint": "chmod +x <ファイル>"
+    },
+    {
+      "prompt": "コマンドの出力をクリップボードにコピーしてください（例: pwd の出力）",
+      "required_tokens": ["pwd"],
+      "synonyms": ["pwd | pbcopy", "echo $(pwd) | pbcopy"],
+      "explanation": "パイプ (|) で出力を次のコマンドに渡せます。pbcopy はmacOSのクリップボードコマンドです。",
+      "hint": "コマンド | pbcopy"
+    },
+    {
+      "prompt": "現在のシェルで使っている環境変数 HOME の値を表示してください",
+      "required_tokens": ["echo", "HOME"],
+      "synonyms": ["echo $HOME", "printenv HOME"],
+      "explanation": "echo $変数名 で環境変数の値を表示します。",
+      "hint": "echo $HOME"
     }
   ],
   "challenges": [
@@ -94,6 +136,25 @@
       ],
       "forbidden_tokens": ["rm"],
       "hint": "ヒント: 一覧確認のあと、再帰検索を行う2手です。"
+    },
+    {
+      "prompt": "ログファイルからエラー行だけ抽出して別ファイルに保存してください\n手順: grep で error を含む行を app_errors.log に保存し、行数を wc で確認する",
+      "required_steps": [
+        ["grep", "error", "/var/log/app.log"],
+        ["wc"]
+      ],
+      "forbidden_tokens": ["rm"],
+      "hint": "grep <パターン> <ファイル> でフィルタし、wc で行数確認"
+    },
+    {
+      "prompt": "ディレクトリ構造を整理してください\n手順: archive ディレクトリを作成し、app.log を archive にコピー、元ファイルは残したまま行数を確認",
+      "required_steps": [
+        ["mkdir", "archive"],
+        ["cp", "app.log"],
+        ["wc"]
+      ],
+      "forbidden_tokens": ["rm"],
+      "hint": "mkdir → cp → wc の順で"
     }
   ]
 }

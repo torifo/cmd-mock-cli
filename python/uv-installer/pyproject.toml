@@ -1,0 +1,14 @@
+[project]
+name = "cmdock-bootstrap"
+version = "0.1.0"
+description = "uv-installable bootstrapper for the cmdock CLI"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+cmdock = "cmdock_bootstrap:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"

@@ -15,6 +15,7 @@ from pathlib import Path
 
 REPO = os.environ.get("CMDOCK_REPO", "torifo/cmd-mock-cli")
 BIN_NAME = "cmdock"
+LEGACY_BIN_NAME = "cmd-mock-cli"
 API_BASE = f"https://api.github.com/repos/{REPO}"
 
 
@@ -47,28 +48,29 @@ def install_binary(version: str) -> Path:
         return target
 
     install_root.mkdir(parents=True, exist_ok=True)
-    asset_name = release_asset_name()
-    url = f"https://github.com/{REPO}/releases/download/{version}/{asset_name}"
-
     with tempfile.TemporaryDirectory(prefix="cmdock-uv-") as temp_dir:
-        archive_path = Path(temp_dir) / asset_name
-        download(url, archive_path)
+        archive_path = download_release_archive(version, Path(temp_dir))
         unpack_archive(archive_path, Path(temp_dir))
-        extracted = Path(temp_dir) / binary_name
+        extracted = extracted_binary(Path(temp_dir), binary_name)
         if not extracted.exists():
-            raise SystemExit(f"Binary {binary_name} not found in {asset_name}")
+            raise SystemExit(f"Binary {binary_name} not found in {archive_path.name}")
         shutil.move(str(extracted), str(target))
         target.chmod(0o755)
 
     return target
 
 
-def release_asset_name() -> str:
+def release_asset_names() -> list[str]:
     os_tag = os_release_tag()
     arch_tag = arch_release_tag()
     if os_tag == "windows":
-        return f"{BIN_NAME}-{os_tag}-{arch_tag}.zip"
-    return f"{BIN_NAME}-{os_tag}-{arch_tag}.tar.gz"
+        extension = ".zip"
+    else:
+        extension = ".tar.gz"
+    return [
+        f"{BIN_NAME}-{os_tag}-{arch_tag}{extension}",
+        f"{LEGACY_BIN_NAME}-{os_tag}-{arch_tag}{extension}",
+    ]
 
 
 def binary_filename() -> str:
@@ -108,6 +110,21 @@ def data_home() -> Path:
     return Path.home() / ".local" / "share"
 
 
+def download_release_archive(version: str, temp_dir: Path) -> Path:
+    last_error: Exception | None = None
+    for asset_name in release_asset_names():
+        destination = temp_dir / asset_name
+        url = f"https://github.com/{REPO}/releases/download/{version}/{asset_name}"
+        try:
+            download(url, destination)
+            return destination
+        except Exception as error:
+            last_error = error
+    raise SystemExit(
+        f"Failed to download a compatible release archive for {version}: {last_error}"
+    )
+
+
 def download(url: str, destination: Path) -> None:
     request = urllib.request.Request(
         url,
@@ -129,3 +146,21 @@ def unpack_archive(archive_path: Path, destination: Path) -> None:
         return
 
     raise SystemExit(f"Unsupported archive format: {archive_path.name}")
+
+
+def extracted_binary(destination: Path, binary_name: str) -> Path:
+    direct = destination / binary_name
+    if direct.exists():
+        return direct
+
+    legacy = destination / legacy_binary_filename()
+    if legacy.exists():
+        return legacy
+
+    return direct
+
+
+def legacy_binary_filename() -> str:
+    if platform.system().lower().startswith("win"):
+        return f"{LEGACY_BIN_NAME}.exe"
+    return LEGACY_BIN_NAME

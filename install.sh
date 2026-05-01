@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO="torifo/cmd-mock-cli"
 BIN_NAME="cmdock"
+LEGACY_BIN_NAME="cmd-mock-cli"
 INSTALL_DIR="${HOME}/.local/bin"
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -26,8 +27,6 @@ case "${ARCH}" in
     ;;
 esac
 
-ARCHIVE="${BIN_NAME}-${OS_TAG}-${ARCH_TAG}.tar.gz"
-
 LATEST=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
   | grep '"tag_name"' \
   | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
@@ -37,22 +36,43 @@ if [ -z "${LATEST}" ]; then
   exit 1
 fi
 
-URL="https://github.com/${REPO}/releases/download/${LATEST}/${ARCHIVE}"
-
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 echo "Downloading cmdock ${LATEST} (${OS_TAG}-${ARCH_TAG})..."
-curl -fsSL "${URL}" -o "${TMP_DIR}/${ARCHIVE}"
-tar -xzf "${TMP_DIR}/${ARCHIVE}" -C "${TMP_DIR}"
+ARCHIVES=(
+  "${BIN_NAME}-${OS_TAG}-${ARCH_TAG}.tar.gz"
+  "${LEGACY_BIN_NAME}-${OS_TAG}-${ARCH_TAG}.tar.gz"
+)
 
-if [ ! -f "${TMP_DIR}/${BIN_NAME}" ]; then
+DOWNLOADED_ARCHIVE=""
+for ARCHIVE in "${ARCHIVES[@]}"; do
+  URL="https://github.com/${REPO}/releases/download/${LATEST}/${ARCHIVE}"
+  if curl -fsSL "${URL}" -o "${TMP_DIR}/${ARCHIVE}"; then
+    DOWNLOADED_ARCHIVE="${ARCHIVE}"
+    break
+  fi
+done
+
+if [ -z "${DOWNLOADED_ARCHIVE}" ]; then
+  echo "Error: no compatible archive found for ${OS_TAG}-${ARCH_TAG}" >&2
+  exit 1
+fi
+
+tar -xzf "${TMP_DIR}/${DOWNLOADED_ARCHIVE}" -C "${TMP_DIR}"
+
+SOURCE_BIN=""
+if [ -f "${TMP_DIR}/${BIN_NAME}" ]; then
+  SOURCE_BIN="${TMP_DIR}/${BIN_NAME}"
+elif [ -f "${TMP_DIR}/${LEGACY_BIN_NAME}" ]; then
+  SOURCE_BIN="${TMP_DIR}/${LEGACY_BIN_NAME}"
+else
   echo "Error: binary not found in archive" >&2
   exit 1
 fi
 
 mkdir -p "${INSTALL_DIR}"
-install -m 755 "${TMP_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
+install -m 755 "${SOURCE_BIN}" "${INSTALL_DIR}/${BIN_NAME}"
 
 echo ""
 echo "Installed: ${INSTALL_DIR}/${BIN_NAME}"

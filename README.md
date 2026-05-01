@@ -14,6 +14,44 @@ Linux / Docker コマンド学習用のモック CLI ゲームです。
 
 ## Install
 
+clone せずに使う導線は `brew` と `uv` を含めて用意します。
+
+### Homebrew
+
+現時点では HEAD install です。
+
+```bash
+brew install --HEAD https://raw.githubusercontent.com/torifo/cmd-mock-cli/main/Formula/cmdock.rb
+cmdock
+```
+
+補足:
+
+- Homebrew が内部で source checkout と build を行います
+- 利用者が手動で `git clone` する必要はありません
+- Rust toolchain は Homebrew 側で build dependency として解決します
+
+### uv
+
+`uv` では GitHub 上の installer package から `cmdock` を入れられます。
+
+```bash
+uv tool install "git+https://github.com/torifo/cmd-mock-cli@main#subdirectory=python/uv-installer"
+cmdock
+```
+
+補足:
+
+- インストールされる `cmdock` は lightweight bootstrapper です
+- 初回実行時に GitHub Release から対応バイナリを取得して実行します
+- 利用者が手動で `git clone` する必要はありません
+
+一時実行だけなら以下でも使えます。
+
+```bash
+uvx --from "git+https://github.com/torifo/cmd-mock-cli@main#subdirectory=python/uv-installer" cmdock --help
+```
+
 ### Script (macOS / Linux)
 
 ```bash
@@ -21,8 +59,6 @@ curl -fsSL https://raw.githubusercontent.com/torifo/cmd-mock-cli/main/install.sh
 ```
 
 バイナリは `~/.local/bin/cmdock` に配置されます。`~/.local/bin` が PATH に含まれていない場合は、スクリプトが案内します。
-
-将来的には Homebrew tap (`brew install torifo/tap/cmdock`) の提供を予定しています。Formula テンプレートは `Formula/cmdock.rb` に準備済みです。
 
 ### From Source
 

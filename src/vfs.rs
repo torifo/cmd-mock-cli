@@ -163,8 +163,7 @@ impl VirtualFs {
         self.collect_paths("/", &self.root, &mut out);
         out.into_iter()
             .filter(|path| {
-                (path == &start_prefix
-                    || path.starts_with(&format!("{}/", start_prefix)))
+                (path == &start_prefix || path.starts_with(&format!("{}/", start_prefix)))
                     && path.rsplit('/').next().unwrap_or_default() == needle
             })
             .collect()
@@ -179,11 +178,9 @@ impl VirtualFs {
     pub fn head(&self, target: &str, n: usize) -> Result<Vec<String>> {
         let path = self.resolve_path(target);
         match self.node_at(&path)? {
-            Node::File { content } => Ok(content
-                .lines()
-                .take(n)
-                .map(ToString::to_string)
-                .collect()),
+            Node::File { content } => {
+                Ok(content.lines().take(n).map(ToString::to_string).collect())
+            }
             Node::Directory { .. } => Err(anyhow!("is a directory: {}", target)),
         }
     }

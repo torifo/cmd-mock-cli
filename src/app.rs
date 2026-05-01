@@ -466,10 +466,10 @@ impl App {
         let ratio = (self.state.stats.correct as f32 / answered as f32) * 100.0;
 
         let mut lines = vec![
-            format!("answered: {}  correct: {}  accuracy: {:.1}%",
-                self.state.stats.answered,
-                self.state.stats.correct,
-                ratio),
+            format!(
+                "answered: {}  correct: {}  accuracy: {:.1}%",
+                self.state.stats.answered, self.state.stats.correct, ratio
+            ),
             String::new(),
         ];
 
@@ -477,8 +477,15 @@ impl App {
         if !self.state.stats.by_play_mode.is_empty() {
             lines.push("by play mode:".to_string());
             for (mode, s) in &self.state.stats.by_play_mode {
-                let acc = if s.answered == 0 { 0.0 } else { s.correct as f32 / s.answered as f32 * 100.0 };
-                lines.push(format!("  {}: {}/{} ({:.1}%)", mode, s.correct, s.answered, acc));
+                let acc = if s.answered == 0 {
+                    0.0
+                } else {
+                    s.correct as f32 / s.answered as f32 * 100.0
+                };
+                lines.push(format!(
+                    "  {}: {}/{} ({:.1}%)",
+                    mode, s.correct, s.answered, acc
+                ));
             }
             lines.push(String::new());
         }
@@ -487,8 +494,15 @@ impl App {
         if !self.state.stats.by_difficulty.is_empty() {
             lines.push("by difficulty:".to_string());
             for (diff, s) in &self.state.stats.by_difficulty {
-                let acc = if s.answered == 0 { 0.0 } else { s.correct as f32 / s.answered as f32 * 100.0 };
-                lines.push(format!("  {}: {}/{} ({:.1}%)", diff, s.correct, s.answered, acc));
+                let acc = if s.answered == 0 {
+                    0.0
+                } else {
+                    s.correct as f32 / s.answered as f32 * 100.0
+                };
+                lines.push(format!(
+                    "  {}: {}/{} ({:.1}%)",
+                    diff, s.correct, s.answered, acc
+                ));
             }
             lines.push(String::new());
         }
@@ -592,16 +606,15 @@ impl App {
         self.push_log_line(format!("> {}", line));
         match step {
             OnboardingStep::Demo => {
-                let result = execute_command(
-                    LearningMode::Linux,
-                    line,
-                    &mut self.vfs,
-                    &mut self.docker,
-                );
+                let result =
+                    execute_command(LearningMode::Linux, line, &mut self.vfs, &mut self.docker);
                 match result {
                     Ok(output) => {
-                        let lines: Vec<String> =
-                            output.stdout.into_iter().filter(|l| !l.is_empty()).collect();
+                        let lines: Vec<String> = output
+                            .stdout
+                            .into_iter()
+                            .filter(|l| !l.is_empty())
+                            .collect();
                         self.push_log_lines(lines);
                     }
                     Err(err) => self.push_log_line(format!("error: {}", err)),
@@ -642,9 +655,7 @@ impl App {
                         self.push_log_lines(prompt_lines);
                     }
                     None => {
-                        self.push_log_line(
-                            "Enter 1 (easy), 2 (normal), or 3 (hard).".to_string(),
-                        );
+                        self.push_log_line("Enter 1 (easy), 2 (normal), or 3 (hard).".to_string());
                     }
                 }
             }
@@ -892,6 +903,36 @@ fn base_completions() -> Vec<String> {
     .collect()
 }
 
+pub fn list_modes() -> String {
+    [
+        "Available options for cmdock:",
+        "",
+        "  --learning-mode <MODE>   Target environment to learn",
+        "    linux    Linux shell commands (default)",
+        "    macos    macOS shell commands",
+        "    docker   Docker CLI commands",
+        "",
+        "  --play-mode <MODE>       Game mode",
+        "    quiz       Answer prompts with the correct command (default)",
+        "    challenge  Complete multi-step tasks then type submit",
+        "",
+        "  --difficulty <LEVEL>     Hint and range control",
+        "    easy    Detailed hints, basic commands (default)",
+        "    normal  Minimal hints, wider range",
+        "    hard    No hints, broadest range",
+        "",
+        "  --no-completion          Disable tab completion",
+        "",
+        "Examples:",
+        "  cmdock",
+        "  cmdock --learning-mode docker --difficulty hard",
+        "  cmdock --play-mode challenge --no-completion",
+        "  cmdock --list",
+        "",
+    ]
+    .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AppPhase, Cli, CliDifficulty, CliPlayMode, OnboardingStep, initial_phase};
@@ -942,7 +983,7 @@ mod tests {
 
     #[test]
     fn result_text_shows_most_missed_commands() {
-        use crate::model::{ModeStats, ProgressStats};
+        use crate::model::ProgressStats;
         use std::collections::BTreeMap;
 
         let mut errors = BTreeMap::new();
@@ -979,11 +1020,17 @@ mod tests {
         let mut cli = bare_cli();
 
         // No flags, no session → Demo
-        assert_eq!(initial_phase(&cli, false), AppPhase::Onboarding(OnboardingStep::Demo));
+        assert_eq!(
+            initial_phase(&cli, false),
+            AppPhase::Onboarding(OnboardingStep::Demo)
+        );
 
         // play_mode only → SelectDifficulty
         cli.play_mode = Some(CliPlayMode::Challenge);
-        assert_eq!(initial_phase(&cli, false), AppPhase::Onboarding(OnboardingStep::SelectDifficulty));
+        assert_eq!(
+            initial_phase(&cli, false),
+            AppPhase::Onboarding(OnboardingStep::SelectDifficulty)
+        );
 
         // both flags → Playing
         cli.difficulty = Some(CliDifficulty::Hard);
@@ -1019,34 +1066,4 @@ mod tests {
         // command_history cleared when play_mode changes
         assert!(state.command_history.is_empty());
     }
-}
-
-pub fn list_modes() -> String {
-    [
-        "Available options for cmdock:",
-        "",
-        "  --learning-mode <MODE>   Target environment to learn",
-        "    linux    Linux shell commands (default)",
-        "    macos    macOS shell commands",
-        "    docker   Docker CLI commands",
-        "",
-        "  --play-mode <MODE>       Game mode",
-        "    quiz       Answer prompts with the correct command (default)",
-        "    challenge  Complete multi-step tasks then type submit",
-        "",
-        "  --difficulty <LEVEL>     Hint and range control",
-        "    easy    Detailed hints, basic commands (default)",
-        "    normal  Minimal hints, wider range",
-        "    hard    No hints, broadest range",
-        "",
-        "  --no-completion          Disable tab completion",
-        "",
-        "Examples:",
-        "  cmdock",
-        "  cmdock --learning-mode docker --difficulty hard",
-        "  cmdock --play-mode challenge --no-completion",
-        "  cmdock --list",
-        "",
-    ]
-    .join("\n")
 }

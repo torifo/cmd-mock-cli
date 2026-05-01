@@ -46,8 +46,12 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
             let mut target = None;
             for t in &tokens[1..] {
                 if t.starts_with('-') {
-                    if t.contains('a') { show_all = true; }
-                    if t.contains('l') { long = true; }
+                    if t.contains('a') {
+                        show_all = true;
+                    }
+                    if t.contains('l') {
+                        long = true;
+                    }
                 } else {
                     target = Some(t.as_str());
                 }
@@ -68,7 +72,9 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
         }
         "mkdir" => {
             let parents = tokens.iter().any(|t| t == "-p");
-            let target = tokens.iter().skip(1)
+            let target = tokens
+                .iter()
+                .skip(1)
                 .find(|t| !t.starts_with('-'))
                 .ok_or_else(|| anyhow!("mkdir requires target"))?;
             if parents {
@@ -79,31 +85,41 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
             Ok(ExecOutput::single(format!("created {}", target)))
         }
         "touch" => {
-            let target = tokens.get(1).ok_or_else(|| anyhow!("touch requires target"))?;
+            let target = tokens
+                .get(1)
+                .ok_or_else(|| anyhow!("touch requires target"))?;
             vfs.touch(target)?;
             Ok(ExecOutput::single(format!("touched {}", target)))
         }
         "cat" => {
-            let target = tokens.get(1).ok_or_else(|| anyhow!("cat requires target"))?;
+            let target = tokens
+                .get(1)
+                .ok_or_else(|| anyhow!("cat requires target"))?;
             Ok(ExecOutput::single(vfs.cat(target)?))
         }
         "cp" => {
             let from = tokens.get(1).ok_or_else(|| anyhow!("cp requires source"))?;
-            let to = tokens.get(2).ok_or_else(|| anyhow!("cp requires destination"))?;
+            let to = tokens
+                .get(2)
+                .ok_or_else(|| anyhow!("cp requires destination"))?;
             vfs.cp(from, to)?;
             Ok(ExecOutput::single(format!("copied {} -> {}", from, to)))
         }
         "mv" => {
             let from = tokens.get(1).ok_or_else(|| anyhow!("mv requires source"))?;
-            let to = tokens.get(2).ok_or_else(|| anyhow!("mv requires destination"))?;
+            let to = tokens
+                .get(2)
+                .ok_or_else(|| anyhow!("mv requires destination"))?;
             vfs.mv(from, to)?;
             Ok(ExecOutput::single(format!("moved {} -> {}", from, to)))
         }
         "rm" => {
-            let recursive = tokens.iter().any(|t| {
-                matches!(t.as_str(), "-r" | "-rf" | "-fr" | "-R")
-            });
-            let target = tokens.iter().skip(1)
+            let recursive = tokens
+                .iter()
+                .any(|t| matches!(t.as_str(), "-r" | "-rf" | "-fr" | "-R"));
+            let target = tokens
+                .iter()
+                .skip(1)
                 .find(|t| !t.starts_with('-'))
                 .ok_or_else(|| anyhow!("rm requires target"))?;
             if recursive {
@@ -121,11 +137,8 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
                 match tokens[i].as_str() {
                     "-name" => {
                         if let Some(next) = tokens.get(i + 1) {
-                            name_pattern = Some(
-                                next.trim_matches('"')
-                                    .trim_start_matches("./")
-                                    .to_string(),
-                            );
+                            name_pattern =
+                                Some(next.trim_matches('"').trim_start_matches("./").to_string());
                             i += 2;
                         } else {
                             i += 1;
@@ -141,55 +154,89 @@ fn execute_shell(tokens: &[String], vfs: &mut VirtualFs) -> Result<ExecOutput> {
             }
             let name = match &name_pattern {
                 Some(n) => n.as_str(),
-                None => tokens.last()
+                None => tokens
+                    .last()
                     .map(|s| s.trim_matches('"').trim_start_matches("./"))
                     .unwrap_or(""),
             };
-            Ok(ExecOutput { stdout: vfs.find_name_in(start, name) })
+            Ok(ExecOutput {
+                stdout: vfs.find_name_in(start, name),
+            })
         }
         "grep" => {
-            let args: Vec<&str> = tokens.iter().skip(1)
+            let args: Vec<&str> = tokens
+                .iter()
+                .skip(1)
                 .filter(|t| !t.starts_with('-'))
                 .map(|s| s.as_str())
                 .collect();
-            let needle = args.first().ok_or_else(|| anyhow!("grep requires needle"))?;
+            let needle = args
+                .first()
+                .ok_or_else(|| anyhow!("grep requires needle"))?;
             if let Some(file) = args.get(1) {
-                Ok(ExecOutput { stdout: vfs.grep_in_file(needle, file)? })
+                Ok(ExecOutput {
+                    stdout: vfs.grep_in_file(needle, file)?,
+                })
             } else {
-                Ok(ExecOutput { stdout: vfs.grep(needle) })
+                Ok(ExecOutput {
+                    stdout: vfs.grep(needle),
+                })
             }
         }
         "echo" => Ok(ExecOutput::single(tokens[1..].join(" "))),
         "head" => {
-            let n = tokens.iter()
+            let n = tokens
+                .iter()
                 .find(|t| t.starts_with('-') && t[1..].chars().all(|c| c.is_ascii_digit()))
                 .and_then(|t| t[1..].parse::<usize>().ok())
                 .unwrap_or(10);
-            let target = tokens.iter().skip(1)
+            let target = tokens
+                .iter()
+                .skip(1)
                 .find(|t| !t.starts_with('-'))
                 .ok_or_else(|| anyhow!("head requires file"))?;
-            Ok(ExecOutput { stdout: vfs.head(target, n)? })
+            Ok(ExecOutput {
+                stdout: vfs.head(target, n)?,
+            })
         }
         "tail" => {
-            let n = tokens.iter()
+            let n = tokens
+                .iter()
                 .find(|t| t.starts_with('-') && t[1..].chars().all(|c| c.is_ascii_digit()))
                 .and_then(|t| t[1..].parse::<usize>().ok())
                 .unwrap_or(10);
-            let target = tokens.iter().skip(1)
+            let target = tokens
+                .iter()
+                .skip(1)
                 .find(|t| !t.starts_with('-'))
                 .ok_or_else(|| anyhow!("tail requires file"))?;
-            Ok(ExecOutput { stdout: vfs.tail(target, n)? })
+            Ok(ExecOutput {
+                stdout: vfs.tail(target, n)?,
+            })
         }
         "wc" => {
-            let target = tokens.iter().skip(1)
+            let target = tokens
+                .iter()
+                .skip(1)
                 .find(|t| !t.starts_with('-'))
                 .ok_or_else(|| anyhow!("wc requires file"))?;
             let (lines, words, bytes) = vfs.wc(target)?;
-            Ok(ExecOutput::single(format!("{:>8} {:>8} {:>8} {}", lines, words, bytes, target)))
+            Ok(ExecOutput::single(format!(
+                "{:>8} {:>8} {:>8} {}",
+                lines, words, bytes, target
+            )))
         }
         "chmod" => {
-            let target = tokens.iter().skip(1)
-                .find(|t| !t.starts_with('-') && !t.chars().all(|c| c.is_ascii_digit()) && !t.contains('+') && !t.contains('-') && !t.contains('='))
+            let target = tokens
+                .iter()
+                .skip(1)
+                .find(|t| {
+                    !t.starts_with('-')
+                        && !t.chars().all(|c| c.is_ascii_digit())
+                        && !t.contains('+')
+                        && !t.contains('-')
+                        && !t.contains('=')
+                })
                 .or_else(|| tokens.last())
                 .ok_or_else(|| anyhow!("chmod requires target"))?;
             Ok(ExecOutput::single(format!("chmod: applied to {}", target)))
@@ -279,7 +326,6 @@ fn execute_docker(tokens: &[String], docker: &mut DockerSim) -> Result<ExecOutpu
         other => Err(anyhow!("unsupported docker subcommand: {}", other)),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

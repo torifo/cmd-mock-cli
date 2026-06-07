@@ -1,5 +1,11 @@
 # cmdock
 
+<!-- tech-stack:start (auto-generated) -->
+<p align="center">
+  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust">
+</p>
+<!-- tech-stack:end -->
+
 Linux / Docker コマンド学習用のモック CLI ゲームです。  
 実環境には触れず、仮想ファイルシステムと仮想 Docker 状態だけを更新します。
 
